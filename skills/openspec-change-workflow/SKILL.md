@@ -14,6 +14,7 @@ superpowers:brainstorming
 -> openspec new change --ff
 -> agent-review-dialogue on generated planning documents
 -> pre-apply self-check
+-> A/B review artifact cleanup
 -> openspec apply + superpowers:test-driven-development
 -> openspec verify + human review loop
 -> openspec archive
@@ -38,6 +39,7 @@ Do not assume the workflow always starts at step 1. When invoked midstream, firs
 - Use `agent-review-dialogue` only after the planning documents exist, with those generated OpenSpec files as the reviewed targets.
 - Do not use `agent-plan-dialogue` for this workflow. OpenSpec owns planning generation; `agent-review-dialogue` owns adversarial review and refinement of the generated documents.
 - Do not run `openspec apply` until the reviewed planning documents pass a final self-check and the user explicitly approves applying them.
+- Before starting `openspec apply`, clean the session-specific A/B review coordination artifacts for the planning review only after final B approval, A double-check, Controller verification, and mandatory durable result capture are complete.
 - Implement after apply with `superpowers:test-driven-development`.
 - Do not archive until `openspec verify`, relevant tests/builds, and human review all pass. Failed verification cannot be waived into an archive.
 - Do not commit or push unless the user explicitly confirms. Preserve unrelated user changes and stage only files that belong to the completed change.
@@ -53,7 +55,7 @@ Before choosing any numbered workflow step, classify the current state:
 4. Continue from that gate, not from the beginning.
 5. If the current state is ambiguous and choosing the wrong stage could overwrite planning documents, skip review, archive failing work, or mix commits, ask the user before acting.
 
-The ordered gates are: scope confirmation, planning document generation, planning document review, pre-apply self-check and approval, apply/TDD implementation, fresh verification and human review, archive, clean user-confirmed commit, then next-change exploration. When resuming, never treat a later user request as proof that earlier gates passed; route to the earliest missing gate in that ordered list.
+The ordered gates are: scope confirmation, planning document generation, planning document review, pre-apply self-check and approval, A/B review artifact cleanup, apply/TDD implementation, fresh verification and human review, archive, clean user-confirmed commit, then next-change exploration. When resuming, never treat a later user request as proof that earlier gates passed; route to the earliest missing gate in that ordered list.
 
 ### Stage Router
 
@@ -64,7 +66,7 @@ Use this table to choose the correct resume point:
 | No OpenSpec change exists for the requested work | Brainstorm and confirm scope | Goal, scope, and acceptance criteria are explicit |
 | Goal/scope are approved but planning files do not exist | Generate planning documents | Change id, capability, and scope choices are known |
 | Planning files exist but no approved `agent-review-dialogue` result exists | Review generated planning documents | Manifest scope covers only generated OpenSpec planning files |
-| Planning review is approved but apply has not run | Pre-apply self-check | Final reviewed plan is still current and user approves apply |
+| Planning review is approved but apply has not run | Pre-apply self-check | Final reviewed plan is still current; user approves apply; final B approval, A double-check, and Controller verification evidence are captured; session-specific A/B review artifacts are cleaned before apply starts |
 | Apply has run and implementation is incomplete | Apply and implement with TDD | Approved plan still matches intended implementation scope |
 | Implementation appears complete but verification is missing or failed | Verify and human-review | Required commands are known; failures return to TDD |
 | Verification and human review passed but change is not archived | Archive | Archive command form is known and required checks pass |
@@ -77,7 +79,7 @@ Recognize these middle-entry intents explicitly:
 
 - `review`, `planning review`, or `review the plan`: route to planning document review unless an approved, current review already exists.
 - `pre-apply`, `ready to apply`, or `apply check`: route to the pre-apply self-check unless planning review is missing or stale.
-- `apply`, `implement`, or `TDD`: route to apply/TDD only after user-approved pre-apply; otherwise stop at the missing gate.
+- `apply`, `implement`, or `TDD`: route to apply/TDD only after user-approved pre-apply and completed A/B review artifact cleanup; otherwise stop at the missing gate.
 - `verify`, `test`, or `human review`: route to fresh verification; failed or missing verification returns to TDD.
 - `archive`: route to archive only after fresh verification and human review pass.
 - `commit`: route to clean commit handling only after archive succeeds and the diff is scoped to the completed change.
@@ -92,6 +94,7 @@ Recognize these middle-entry intents explicitly:
 - Archive success must be verified from command output and resulting file changes. If archive modifies specs, generated state, or metadata, rerun `openspec verify` before commit handling.
 - Failed verification cannot be waived into an archive. The only valid paths are fix within scope, rescope with review and approval, or pause.
 - Clean commit handling must finish before next-change exploration. If the completed change remains uncommitted, partially staged, mixed with unrelated changes, or awaiting user confirmation, do not run `openspec explore`.
+- A/B review cleanup is current only after the final `agent-review-dialogue` result has been durably captured outside the coordination directory that will be deleted, including B approval, A double-check no-change, Controller verification passed, review round count, unresolved assumptions, active change id, and user decisions that affect implementation. Clean only the active session-specific review coordination directory; do not delete the parent `.agent-review-dialogue/` tree, sibling review runs, OpenSpec planning documents, decisions that were copied into the plan, implementation files, or unrelated review runs.
 
 ## Workflow
 
@@ -162,11 +165,20 @@ Before applying the reviewed plan, reread the final OpenSpec documents and check
 
 Human confirmation required before `openspec apply`: summarize the final reviewed planning state, call out residual risks, and ask the user to approve applying the change.
 
-When resuming here, verify that the approved review still matches the current planning files. If the approval is stale, return to the review stage.
+After the user approves apply and before running `openspec apply`, clean the A/B review intermediate artifacts created for the planning-document review. This cleanup must:
+
+- Run only after final B approval, A's double-check reports no further changes, and Controller verification has passed.
+- Before deleting the coordination directory, durably capture B approval, A double-check no-change, Controller verification passed, review round count, unresolved assumptions, active change id, and user decisions that affect implementation in a location that will not be deleted by the cleanup.
+- Delete only the session-specific coordination directory that is active for the approved planning review, such as `.agent-review-dialogue/<change-id>/<session-key>/`.
+- Never delete `.agent-review-dialogue/` itself, sibling session directories, unrelated review runs, reviewed OpenSpec planning documents, implementation files, or user-approved decisions that affect implementation.
+- Stop and ask if multiple review runs exist, the active session-specific directory cannot be identified safely, or the available evidence does not prove which review run approved the current planning files.
+- Treat cleanup as the final pre-apply gate. After cleanup, run `openspec apply` only from the preserved OpenSpec planning documents and captured decisions, not from deleted coordination artifacts.
+
+When resuming here, verify that the approved review still matches the current planning files. If the approval is stale, return to the review stage. If the review coordination directory is already absent because it was cleaned, continue only when durable evidence proves B approval, A double-check no-change, Controller verification passed, review round count, unresolved assumptions, active change id, and user decisions that affect implementation; otherwise stop and ask instead of recreating or guessing the deleted review context.
 
 ### 5. Apply And Implement With TDD
 
-Run `openspec apply` only after the user approves the pre-apply self-check. Then use `superpowers:test-driven-development` for implementation:
+Run `openspec apply` only after user-approved pre-apply self-check, final result durable capture, and session-specific A/B coordination cleanup are all complete. Then use `superpowers:test-driven-development` for implementation:
 
 1. Write or expose a failing test for the approved behavior.
 2. Implement the smallest correct change.
@@ -258,6 +270,7 @@ Always pause for explicit user approval at these gates:
 | Missing change id, capability, compatibility, migration, rollout, or scope split decision | Choosing defaults |
 | A/B review surfaces product, API, compatibility, migration, dependency, scope, or verification decisions | Continuing the review loop |
 | Final reviewed plan approval after pre-apply self-check | `openspec apply` |
+| A/B review intermediate cleanup | Starting `openspec apply` |
 | Scope expansion, dependency changes, infrastructure changes, or weaker tests | Implementation beyond reviewed plan |
 | Automated verification and human diff/behavior review | `openspec archive` |
 | Failed required verification | Any archive attempt; fix, rescope, or pause instead |
@@ -276,6 +289,7 @@ Stop and ask the user instead of guessing when:
 - The generated change is too broad for one implementation cycle.
 - `agent-review-dialogue` reports `blocked-on-user` or fails artifact validation.
 - The pre-apply self-check finds unresolved planning issues.
+- A/B review artifacts must be cleaned before apply but the active session-specific directory cannot be identified safely.
 - `openspec verify` or required tests fail and cannot be fixed within the approved scope.
 - Archive or diff includes unrelated files.
 - A clean user-confirmed commit is not complete; do not proceed to next-change discovery.
