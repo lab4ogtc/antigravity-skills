@@ -138,14 +138,22 @@ When Codex has no session ids, use stable descriptive ids such as `native-subage
 
 ### Environment Agent Check
 
-Before creating or replacing any A/B subagent/session, inspect the current environment for predefined agents. Use the platform's native agent discovery/listing mechanism when available.
+Before creating or replacing any A/B subagent/session, inspect the current environment for predefined agents. Use the active agent tool's native discovery/listing mechanism when available.
+
+The active agent tool is the runtime tool that will actually create or continue the A/B sessions, such as `claude code`, `codex`, or `opencode`. Predefined-agent discovery must stay inside that tool's own configuration hierarchy and namespace:
+
+- If the current run launches A/B with `opencode`, search only opencode-managed agent locations or opencode's native agent list.
+- If the current run launches A/B with `codex`, search only Codex-managed agent locations or Codex's native agent list.
+- If the current run launches A/B with `claude code`, search only Claude Code-managed agent locations or Claude Code's native agent list.
+- Do not scan sibling, parent, plugin-cache, global, or repository directories that belong to another agent tool just to find `dialogue-designer` or `dialogue-reviewer`.
+- If a native discovery mechanism aggregates agents from multiple tools, filter the result to the active tool's hierarchy before matching names. If the hierarchy cannot be distinguished, treat the match as ambiguous and create A/B normally.
 
 - If a predefined agent named exactly `dialogue-designer` exists, create Agent A / Editor with that predefined agent.
 - If a predefined agent named exactly `dialogue-reviewer` exists, create Agent B / Reviewer with that predefined agent.
 - If only one predefined agent exists, use it only for its matching role and create the other role normally.
 - If neither predefined agent exists, if agent discovery is unavailable, or if the name match is ambiguous, create A/B normally.
 - Do not use a similarly named predefined agent. Only exact names are valid.
-- Record the discovery method, match result, chosen predefined agent names, fallback reason, and timestamp in `session-ids.md`.
+- Record the active agent tool, discovery method, discovery root or native listing source, excluded cross-tool roots if relevant, match result, chosen predefined agent names, fallback reason, and timestamp in `session-ids.md`.
 
 Predefined agents do not replace the skill protocol. Always pass the same shared directory, freshness token, role prompt, target scope, and artifact requirements to A/B, and validate their outputs exactly as usual.
 
