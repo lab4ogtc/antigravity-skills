@@ -1,0 +1,282 @@
+---
+name: openspec-change-workflow
+description: Use when the user wants to run, resume, audit, or continue an OpenSpec change lifecycle at any stage, including planning document review, apply/TDD, verification, archive, commit handoff, or next-change discovery.
+---
+
+# OpenSpec Change Workflow
+
+## Purpose
+
+Use this workflow to take one OpenSpec change from an idea to archived completion, or to resume an already-started change from its current stage. The full intended path is:
+
+```text
+superpowers:brainstorming
+-> openspec new change --ff
+-> agent-review-dialogue on generated planning documents
+-> pre-apply self-check
+-> openspec apply + superpowers:test-driven-development
+-> openspec verify + human review loop
+-> openspec archive
+-> user-confirmed clean commit
+-> openspec explore
+-> repeat or stop
+```
+
+This skill is not a shortcut around review. Fast generation creates planning documents quickly; it does not approve their content.
+
+The frontmatter `description` is only an activation trigger. It is not permission to skip current-stage classification, human confirmation gates, review, verification, archive checks, or clean commit handling.
+
+Do not assume the workflow always starts at step 1. When invoked midstream, first identify the current stage, verify that prior gates have evidence, then continue from the earliest incomplete required gate.
+
+## Non-Negotiable Rules
+
+- Start by detecting the current lifecycle stage from repository state, OpenSpec files, review artifacts, git status, and the user's latest instruction.
+- Do not restart from brainstorming or regenerate OpenSpec documents when valid later-stage artifacts already exist, unless the user explicitly asks to restart.
+- When resuming midstream, run only the missing prerequisites for the current or next stage; preserve completed, validated stages.
+- Use `superpowers:brainstorming` before creating or changing OpenSpec planning documents.
+- Use `openspec new change --ff` to generate the initial planning documents once the user has confirmed the goal, scope, and acceptance criteria.
+- Use `agent-review-dialogue` only after the planning documents exist, with those generated OpenSpec files as the reviewed targets.
+- Do not use `agent-plan-dialogue` for this workflow. OpenSpec owns planning generation; `agent-review-dialogue` owns adversarial review and refinement of the generated documents.
+- Do not run `openspec apply` until the reviewed planning documents pass a final self-check and the user explicitly approves applying them.
+- Implement after apply with `superpowers:test-driven-development`.
+- Do not archive until `openspec verify`, relevant tests/builds, and human review all pass. Failed verification cannot be waived into an archive.
+- Do not commit or push unless the user explicitly confirms. Preserve unrelated user changes and stage only files that belong to the completed change.
+- After archive and the user-confirmed clean commit are complete, use `openspec explore` to discover the next candidate change, then ask before starting the next loop. If the commit is deferred, pause or stop instead of exploring.
+
+## Entry Protocol
+
+Before choosing any numbered workflow step, classify the current state:
+
+1. Read the user's latest request for an explicit stage, such as "review the plan", "apply", "verify", "archive", "commit", or "explore next".
+2. Inspect repository state with non-destructive commands such as `git status`, OpenSpec directories, existing change files, review artifacts, and test results when available.
+3. Build a current-stage classification that names the active change id when known, the requested entry stage, the latest completed gate with evidence, and the earliest required gate that lacks evidence.
+4. Continue from that gate, not from the beginning.
+5. If the current state is ambiguous and choosing the wrong stage could overwrite planning documents, skip review, archive failing work, or mix commits, ask the user before acting.
+
+The ordered gates are: scope confirmation, planning document generation, planning document review, pre-apply self-check and approval, apply/TDD implementation, fresh verification and human review, archive, clean user-confirmed commit, then next-change exploration. When resuming, never treat a later user request as proof that earlier gates passed; route to the earliest missing gate in that ordered list.
+
+### Stage Router
+
+Use this table to choose the correct resume point:
+
+| Observed state | Resume at | Required check before continuing |
+| --- | --- | --- |
+| No OpenSpec change exists for the requested work | Brainstorm and confirm scope | Goal, scope, and acceptance criteria are explicit |
+| Goal/scope are approved but planning files do not exist | Generate planning documents | Change id, capability, and scope choices are known |
+| Planning files exist but no approved `agent-review-dialogue` result exists | Review generated planning documents | Manifest scope covers only generated OpenSpec planning files |
+| Planning review is approved but apply has not run | Pre-apply self-check | Final reviewed plan is still current and user approves apply |
+| Apply has run and implementation is incomplete | Apply and implement with TDD | Approved plan still matches intended implementation scope |
+| Implementation appears complete but verification is missing or failed | Verify and human-review | Required commands are known; failures return to TDD |
+| Verification and human review passed but change is not archived | Archive | Archive command form is known and required checks pass |
+| Archive is complete but no clean user-confirmed commit exists | Prepare clean commit | Diff contains only this completed change and user confirms commit |
+| Clean commit is complete and user wants the next item | Explore next change | Working tree state is suitable for discovery |
+
+If multiple changes are present, identify the active change id before continuing. If that cannot be determined safely, ask the user.
+
+Recognize these middle-entry intents explicitly:
+
+- `review`, `planning review`, or `review the plan`: route to planning document review unless an approved, current review already exists.
+- `pre-apply`, `ready to apply`, or `apply check`: route to the pre-apply self-check unless planning review is missing or stale.
+- `apply`, `implement`, or `TDD`: route to apply/TDD only after user-approved pre-apply; otherwise stop at the missing gate.
+- `verify`, `test`, or `human review`: route to fresh verification; failed or missing verification returns to TDD.
+- `archive`: route to archive only after fresh verification and human review pass.
+- `commit`: route to clean commit handling only after archive succeeds and the diff is scoped to the completed change.
+- `explore`, `next change`, or `what next`: route to next-change exploration only after archive and a clean user-confirmed commit are complete.
+
+### Evidence Freshness Rules
+
+- Existing OpenSpec planning documents must be preserved. Do not overwrite or regenerate them merely because the user invoked the skill again; inspect and resume from review or a later missing gate.
+- An `agent-review-dialogue` approval is current only when its target scope and timestamps correspond to the current planning files. If any reviewed planning file changed after approval, rerun review.
+- `openspec apply` must not be repeated blindly. If apply appears to have run, inspect the working tree, OpenSpec state, and task progress; continue implementation from the next missing or failing test.
+- Verification evidence is current only when it was produced after the latest relevant implementation, planning, archive, or spec change. Old terminal output without a durable artifact is not sufficient.
+- Archive success must be verified from command output and resulting file changes. If archive modifies specs, generated state, or metadata, rerun `openspec verify` before commit handling.
+- Failed verification cannot be waived into an archive. The only valid paths are fix within scope, rescope with review and approval, or pause.
+- Clean commit handling must finish before next-change exploration. If the completed change remains uncommitted, partially staged, mixed with unrelated changes, or awaiting user confirmation, do not run `openspec explore`.
+
+## Workflow
+
+### 1. Brainstorm And Confirm Scope
+
+Use `superpowers:brainstorming` to clarify the change before touching OpenSpec documents. Keep the dialogue short when the request is already concrete, but still confirm the decisions that affect correctness. Skip this step only when resuming an existing change whose goal, scope, and acceptance criteria are already captured in validated OpenSpec documents or explicit user decisions.
+
+Human confirmation required before `openspec new change --ff`:
+
+- Change goal and user-visible outcome.
+- In-scope and out-of-scope boundaries.
+- Acceptance criteria and verification expectations.
+- Compatibility, migration, rollback, or public API constraints when relevant.
+
+If any of these are missing and would affect the generated plan, ask the user instead of choosing defaults.
+
+### 2. Generate Planning Documents
+
+Use this step only when planning documents are missing or the user explicitly asked to regenerate them. If planning documents already exist, inspect them and route to review or the earliest incomplete later gate instead of overwriting them.
+
+Run the repository-appropriate form of:
+
+```bash
+openspec new change --ff
+```
+
+Use the command to generate the initial OpenSpec planning set in one pass. Expected outputs commonly include proposal, tasks, design notes, spec deltas, and verification guidance, but trust the local OpenSpec project structure over generic filenames.
+
+Human confirmation required before choosing any missing:
+
+- Change id or naming convention.
+- Affected capability or spec area.
+- Compatibility policy.
+- Migration or rollout strategy.
+- Scope split when the generated change would be too large for one cycle.
+
+If the CLI, flags, or project layout differ from expectation, stop and ask or inspect local OpenSpec help before inventing a workflow.
+
+### 3. Review Generated Planning Documents
+
+Use `agent-review-dialogue` after `openspec new change --ff` has produced concrete files. Configure the review scope so Agent A may edit only the generated OpenSpec planning documents and its `change-log.md`; Agent B reviews only and writes `review.md`.
+
+The review must check:
+
+- Ambiguous requirements, implicit assumptions, and missing acceptance criteria.
+- Tasks that cannot be tested or verified.
+- Missing failure, migration, rollback, compatibility, or security considerations.
+- Scope creep beyond the user-approved goal.
+- Contradictions between proposal, tasks, design, spec deltas, and verification plan.
+- Whether implementation can proceed with TDD.
+
+Do not continue from Agent A's summary alone. Proceed only after the `agent-review-dialogue` loop reaches approval according to its own artifact validation: B approves, A double-checks, and controller verification passes.
+
+Human confirmation required during review when A or B raises any decision that changes product behavior, compatibility, migration, public API, acceptance criteria, verification obligations, dependency policy, or scope.
+
+When resuming from this stage, reuse existing valid `agent-review-dialogue` artifacts only if they correspond to the current planning files. If the planning files changed after approval, rerun review.
+
+### 4. Run Pre-Apply Self-Check
+
+Before applying the reviewed plan, reread the final OpenSpec documents and check for:
+
+- Unresolved placeholders or stale assumptions.
+- Vague tasks or unverifiable acceptance criteria.
+- Missing tests for changed behavior.
+- Missing migration, rollback, compatibility, or documentation work.
+- Inconsistency between the reviewed plan and intended implementation scope.
+- Any implementation work outside the reviewed OpenSpec change.
+
+Human confirmation required before `openspec apply`: summarize the final reviewed planning state, call out residual risks, and ask the user to approve applying the change.
+
+When resuming here, verify that the approved review still matches the current planning files. If the approval is stale, return to the review stage.
+
+### 5. Apply And Implement With TDD
+
+Run `openspec apply` only after the user approves the pre-apply self-check. Then use `superpowers:test-driven-development` for implementation:
+
+1. Write or expose a failing test for the approved behavior.
+2. Implement the smallest correct change.
+3. Refactor while keeping tests green.
+4. Repeat until every approved task is complete.
+
+For C/C++ changes, also check ownership, RAII, exception/error safety, resource lifetime, undefined behavior, integer and bounds safety, concurrency assumptions, and concrete unit coverage.
+
+Human confirmation required if implementation requires any of the following:
+
+- Expanding beyond the reviewed OpenSpec scope.
+- Changing external behavior not captured in the documents.
+- Adding or replacing a dependency.
+- Changing build, packaging, test infrastructure, CI, or repository policy.
+- Accepting a weaker test strategy than the reviewed plan required.
+
+When resuming after `openspec apply`, do not re-apply blindly. Inspect the working tree and OpenSpec state to determine which approved tasks remain incomplete, then continue TDD from the next failing or missing test.
+
+### 6. Verify And Human-Review
+
+Run:
+
+```bash
+openspec verify
+```
+
+Also run the relevant build, test, lint, or project-specific checks implied by the OpenSpec documents and repository norms. If verification fails, return to the TDD loop, fix the cause, and rerun the checks.
+
+Human confirmation required before archive:
+
+- `openspec verify` and all required project checks pass.
+- The user has reviewed the final behavior and diff.
+- Remaining risks, skipped tests, and follow-up work are visible and do not represent failed required checks.
+
+If any required command does not pass, do not archive. Return to implementation, adjust the approved scope, or pause with the risk recorded; a human acceptance of a failing command is not permission to run `openspec archive`.
+
+When resuming here, do not rely on old terminal output unless it is captured in a durable artifact. Re-run the required verification commands or clearly report that fresh verification is still needed.
+
+### 7. Archive
+
+Run `openspec archive` only after automated verification and human review are complete. Before running it, determine the exact local command form. If archive requires a change id, flag, path, or project-specific option, inspect local help such as `openspec archive --help` or existing OpenSpec project conventions instead of assuming a bare command is correct.
+
+Inspect the archive output and resulting diff.
+
+After archiving:
+
+- Re-run `openspec verify` if archive changed specs, generated state, or project metadata.
+- Confirm no unrelated files were modified.
+- Confirm any generated archive or spec updates match the completed change.
+
+Human confirmation required if archive output changes unexpected files, exposes unresolved follow-up work, or requires a policy decision.
+
+When resuming here, confirm the verification evidence is current for the implementation being archived. If files changed after verification, return to verification.
+
+### 8. Prepare Clean Commit
+
+Review `git status`, `git diff`, and `git diff --cached` before staging or committing. Account for untracked files and any pre-existing staged changes. Stage only files related to the completed OpenSpec change and its implementation.
+
+If unrelated files are already staged, unstaged, or untracked, pause and ask the user how to handle them. Do not unstage, revert, delete, or include unrelated changes without explicit user direction.
+
+Do not run `git commit` or `git push` without explicit user confirmation. If the repository defines commit-message rules, follow them. In this repository, commit messages must be Chinese and use `类型: 简短描述`, for example `fix: 修正内存泄漏问题`.
+
+Human confirmation required before every commit and every push, even when all checks pass.
+
+When resuming here, check whether a commit already exists for the archived change. If it does, do not create a duplicate; report the existing commit and continue only if the user asks for more git handling.
+
+### 9. Explore Next Change
+
+After archive and the user-confirmed clean commit are complete, run:
+
+```bash
+openspec explore
+```
+
+Summarize any next actionable change. Ask the user whether to start it before generating new OpenSpec documents. If the user approves, return to the planning document generation step and run the loop again.
+
+If the user defers or declines the clean commit, do not run `openspec explore`. Pause or stop the current lifecycle with the uncommitted state clearly reported.
+
+When resuming here, first ensure the working tree is not carrying uncommitted files from the completed change. If it is, return to clean commit handling or ask whether to pause instead of discovering a new change.
+
+## Human Confirmation Gates
+
+Always pause for explicit user approval at these gates:
+
+| Gate | Required before |
+| --- | --- |
+| Current-stage classification | Any action that could overwrite, apply, archive, commit, or start another change |
+| Goal, scope, and acceptance criteria approval | `openspec new change --ff` |
+| Missing change id, capability, compatibility, migration, rollout, or scope split decision | Choosing defaults |
+| A/B review surfaces product, API, compatibility, migration, dependency, scope, or verification decisions | Continuing the review loop |
+| Final reviewed plan approval after pre-apply self-check | `openspec apply` |
+| Scope expansion, dependency changes, infrastructure changes, or weaker tests | Implementation beyond reviewed plan |
+| Automated verification and human diff/behavior review | `openspec archive` |
+| Failed required verification | Any archive attempt; fix, rescope, or pause instead |
+| Unexpected archive output | Accepting archive result |
+| Clean commit | `git commit` |
+| Push | `git push` |
+| Next-change approval | Next `openspec new change --ff` |
+
+## Stop Conditions
+
+Stop and ask the user instead of guessing when:
+
+- A requirement affects correctness, scope, compatibility, migration, verification, or repository history and is not explicit.
+- The current lifecycle stage cannot be identified safely from user input and repository artifacts.
+- The OpenSpec command, `--ff` behavior, generated file layout, or archive semantics are unclear.
+- The generated change is too broad for one implementation cycle.
+- `agent-review-dialogue` reports `blocked-on-user` or fails artifact validation.
+- The pre-apply self-check finds unresolved planning issues.
+- `openspec verify` or required tests fail and cannot be fixed within the approved scope.
+- Archive or diff includes unrelated files.
+- A clean user-confirmed commit is not complete; do not proceed to next-change discovery.
+- Any step would require committing, pushing, destructive git operations, broad formatting, or reverting user changes.
