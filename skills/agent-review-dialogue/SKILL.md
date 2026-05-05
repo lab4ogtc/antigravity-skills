@@ -132,13 +132,19 @@ Validation must inspect files on disk after the role finishes. A role's terminal
 
 ## Runtime Selection
 
-Prefer native independent subagent/session tools and record identifiers in `session-ids.md`. If true independent subagents are unavailable, emulate separation with explicit A and B phases against shared files; do not claim review happened until B executes and `review.md` validates.
+Prefer native independent subagent/session tools and record identifiers in `session-ids.md`. When no exact predefined agent is bound for a role, the fallback may use any available independent subagent or independent session from the active runtime. The fallback must not be the current Controller/main conversation thread when the runtime can create or continue a separate subagent/session. Treat `emulated-phase` as an unavailable-runtime fallback only, not as the normal fallback for a missing predefined agent. If no independent subagent/session runtime is available, emulate separation with explicit A and B phases against shared files, record that limitation, and do not claim review happened until B executes and `review.md` validates.
+
+Fallback priority:
+
+1. Bind exact predefined agents through the active runtime when supported.
+2. For each unbound role, create or continue a separate independent subagent/session from the active runtime, even if it has no predefined agent name.
+3. Use `emulated-phase` only when the active environment cannot provide a separate subagent/session for that role.
 
 When Codex has no session ids, use stable descriptive ids such as `native-subagent-A`, `native-subagent-B`, or `not-available`, and document the limitation in `session-ids.md`. When opencode is available, create named sessions and continue them by exact session id.
 
 ### Environment Agent Check
 
-Before creating or replacing any A/B subagent/session, inspect the current environment for predefined agents. Use the active agent tool's native discovery/listing mechanism when available.
+Before creating or replacing any A/B subagent/session, inspect the current environment for predefined agents. Use the active agent tool's native discovery/listing mechanism when available. This check may select predefined role agents only by exact name; fallback agent selection may use any separate subagent/session supported by the active runtime, but never the current Controller/main conversation thread when a separate subagent/session is available.
 
 The active agent tool is the runtime tool that will actually create or continue the A/B sessions, such as `claude code`, `codex`, or `opencode`. Predefined-agent discovery must stay inside that tool's own configuration hierarchy and namespace:
 
@@ -146,14 +152,14 @@ The active agent tool is the runtime tool that will actually create or continue 
 - If the current run launches A/B with `codex`, search only Codex-managed agent locations or Codex's native agent list.
 - If the current run launches A/B with `claude code`, search only Claude Code-managed agent locations or Claude Code's native agent list.
 - Do not scan sibling, parent, plugin-cache, global, or repository directories that belong to another agent tool just to find `dialogue-designer` or `dialogue-reviewer`.
-- If a native discovery mechanism aggregates agents from multiple tools, filter the result to the active tool's hierarchy before matching names. If the hierarchy cannot be distinguished, treat the match as ambiguous and create A/B normally.
+- If a native discovery mechanism aggregates agents from multiple tools, filter the result to the active tool's hierarchy before matching names. If the hierarchy cannot be distinguished, treat the match as ambiguous and create A/B with any independent subagent/session from the active runtime; use `emulated-phase` only if no separate runtime is available.
 
 - If a predefined agent named exactly `dialogue-designer` exists, create Agent A / Editor with that predefined agent.
 - If a predefined agent named exactly `dialogue-reviewer` exists, create Agent B / Reviewer with that predefined agent.
-- If only one predefined agent exists, use it only for its matching role and create the other role normally.
-- If neither predefined agent exists, if agent discovery is unavailable, or if the name match is ambiguous, create A/B normally.
-- Do not use a similarly named predefined agent. Only exact names are valid.
-- Record the active agent tool, discovery method, discovery root or native listing source, excluded cross-tool roots if relevant, match result, chosen predefined agent names, fallback reason, and timestamp in `session-ids.md`.
+- If only one predefined agent exists, use it only for its matching role and create the other role with any independent subagent/session from the active runtime.
+- If neither predefined agent exists, if agent discovery is unavailable, or if the name match is ambiguous, create A/B with independent subagents/sessions from the active runtime; do not downgrade to `emulated-phase` for these cases unless the runtime cannot create or continue separate A/B execution.
+- Do not use a similarly named predefined agent as if it were an exact `dialogue-designer` or `dialogue-reviewer` match. Only exact names are valid for predefined role binding. Fallback may use any separate subagent/session, but not the current Controller/main conversation thread when a separate subagent/session is available.
+- Record the active agent tool, discovery method, discovery root or native listing source, excluded cross-tool roots if relevant, match result, chosen predefined agent names, fallback reason, fallback creation mechanism (`independent-subagent`, `independent-session`, or `emulated-phase`), and timestamp in `session-ids.md`. When the mechanism is `emulated-phase`, also record which independent subagent/session capability was unavailable.
 
 Predefined agents do not replace the skill protocol. Always pass the same shared directory, freshness token, role prompt, target scope, and artifact requirements to A/B, and validate their outputs exactly as usual.
 
@@ -161,8 +167,8 @@ Binding rules:
 
 - If the runtime supports choosing a predefined agent for a native subagent/session, bind A to `dialogue-designer` and B to `dialogue-reviewer` using that runtime's explicit selector.
 - If using opencode and it supports an agent selector, put the selector in the A/B command at the `<A-agent-binding-args>` or `<B-agent-binding-args>` placeholder shown below.
-- If the runtime has predefined agents but no supported way to bind them to the actual A/B call, continue with normal A/B sessions and record the unsupported binding as a fallback.
-- `session-ids.md` must record, for each role, the discovered predefined agent name, whether it was bound, the actual invocation method or binding arguments, the resulting session id when available, and the fallback reason when not bound.
+- If the runtime has predefined agents but no supported way to bind them to the actual A/B call, continue with independent A/B subagents or sessions and record the unsupported binding as a fallback.
+- `session-ids.md` must record, for each role, the discovered predefined agent name, whether it was bound, the actual invocation method or binding arguments, the resulting session id when available, and the fallback reason plus independent creation mechanism when not bound.
 
 ### opencode Pattern
 
@@ -353,7 +359,7 @@ opencode run --session "<session-id>" --dir "$PWD" --format json "<recovery prom
 opencode session list --format json --max-count 20
 ```
 
-6. If same-session recovery is impossible, rerun the environment agent check for the failed role, record the selection or fallback in `session-ids.md`, then start a replacement session with the matching predefined agent when available and provide shared-state files:
+6. If same-session recovery is impossible, rerun the environment agent check for the failed role, record the selection or fallback in `session-ids.md`, then start a replacement session with the matching predefined agent when available, or with any independent subagent/session from the active runtime when no exact predefined agent is bound. Use `emulated-phase` only if replacement independent execution is unavailable. Provide shared-state files:
 
 ```bash
 ROLE_TITLE="<A Editor | B Reviewer> - ${TASK_SLUG} - replacement - $(date -u +%Y%m%dT%H%M%SZ)"
