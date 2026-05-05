@@ -15,6 +15,7 @@ superpowers:brainstorming
 -> agent-review-dialogue on generated planning documents
 -> pre-apply self-check
 -> A/B review artifact cleanup
+-> per-change development subagent context handoff
 -> openspec-apply-change + superpowers:test-driven-development
 -> openspec-verify-change + OpenSpec validation + human review loop
 -> openspec archive "<change-id>"
@@ -44,6 +45,9 @@ Do not assume the workflow always starts at step 1. When invoked midstream, firs
 - Do not use `agent-plan-dialogue` for this workflow. OpenSpec owns planning generation; `agent-review-dialogue` owns adversarial review and refinement of the generated documents.
 - Do not start OpenSpec apply work until the reviewed planning documents pass a final self-check and the user explicitly approves applying them.
 - Before starting apply work, clean the session-specific A/B review coordination artifacts for the planning review only after final B approval, A double-check, Controller verification, and mandatory durable result capture are complete.
+- If using a development subagent, use one dedicated development subagent per active OpenSpec change. Do not carry a single long-lived development subagent across multiple changes.
+- Cross-change learning must come from explicit artifacts selected by the Controller, not from a development subagent's implicit memory. Valid inputs include archived specs, post-archive context compression summaries, commit hashes, changed-file lists, compatibility notes, and current OpenSpec documents.
+- Keep `agent-review-dialogue` A/B agents isolated from development subagents. A/B review must receive only the exact target manifest, current planning documents, and explicitly recorded decisions; it must not inherit or rely on development subagent memory.
 - Implement after apply with `superpowers:test-driven-development`.
 - Do not archive until `openspec-verify-change` or its manual fallback has no blocking findings, `openspec validate`, relevant tests/builds, and human review all pass. Failed verification cannot be waived into an archive.
 - Do not commit or push unless the user explicitly confirms. Preserve unrelated user changes and stage only files that belong to the completed change.
@@ -66,6 +70,28 @@ Keep discovery inside the current agent runtime's visible skill or command list.
 
 If the local OpenSpec version differs, inspect `openspec --help` and the relevant subcommand help before acting. If neither the matching skill nor a supported CLI fallback exists, stop and ask the user rather than calling a guessed command.
 
+## Development Subagent Context Boundaries
+
+Use a development subagent only as an implementation worker for a single active OpenSpec change. The Controller owns stage classification, gate decisions, review orchestration, verification decisions, archive handling, commit handling, context compression, and next-change discovery.
+
+A per-change development subagent may benefit from previous changes only through an explicit context handoff prepared by the Controller. That handoff may include:
+
+- Current change id, current OpenSpec planning documents, tasks, and apply instructions.
+- Relevant archived specs from previous changes.
+- The latest post-archive context compression summaries that directly affect this change.
+- Commit hashes, changed-file lists, compatibility or migration notes, unresolved assumptions, and follow-up items selected as relevant.
+
+The handoff must not include a broad transcript dump, unrelated prior-change discussion, stale terminal output, or hidden assumptions from a previous development session. If the previous context is useful but not captured in an artifact, first write a durable summary or ask the user before using it.
+
+Do not reuse one long-lived development subagent across multiple changes as a way to preserve context. End, freeze, or discard the development subagent after the change is verified, archived, and clean commit handling is resolved. For the next change, create a fresh development context from the newly reloaded workflow skill, current OpenSpec documents, and explicit artifacts only.
+
+`agent-review-dialogue` remains separate from development execution:
+
+- Agent A/B sessions are created per review run and follow `agent-review-dialogue` state, manifest, artifact, and cleanup rules.
+- A/B agents may read previous-change artifacts only when the Controller explicitly lists them in `target-manifest.md` or `decisions.md` for that review.
+- A/B agents must not read or rely on a development subagent's private memory, session transcript, unstated conclusions, or implementation-only scratchpad.
+- Development subagent output is not review approval. Planning review approval still requires B approval, A double-check, and Controller verification from `agent-review-dialogue`.
+
 ## Entry Protocol
 
 Before choosing any numbered workflow step, classify the current state:
@@ -76,7 +102,7 @@ Before choosing any numbered workflow step, classify the current state:
 4. Continue from that gate, not from the beginning.
 5. If the current state is ambiguous and choosing the wrong stage could overwrite planning documents, skip review, archive failing work, or mix commits, ask the user before acting.
 
-The ordered gates are: scope confirmation, planning document generation, planning document review, pre-apply self-check and approval, A/B review artifact cleanup, apply/TDD implementation, fresh verification and human review, archive, clean user-confirmed commit, post-archive context compression, workflow skill reload, then next-change exploration. When resuming, never treat a later user request as proof that earlier gates passed; route to the earliest missing gate in that ordered list.
+The ordered gates are: scope confirmation, planning document generation, planning document review, pre-apply self-check and approval, A/B review artifact cleanup, development subagent context handoff when used, apply/TDD implementation, fresh verification and human review, archive, clean user-confirmed commit, post-archive context compression, workflow skill reload, then next-change exploration. When resuming, never treat a later user request as proof that earlier gates passed; route to the earliest missing gate in that ordered list.
 
 ### Stage Router
 
@@ -87,7 +113,7 @@ Use this table to choose the correct resume point:
 | No OpenSpec change exists for the requested work | Brainstorm and confirm scope | Goal, scope, and acceptance criteria are explicit |
 | Goal/scope are approved but planning files do not exist | Generate planning documents | Change id, capability, and scope choices are known |
 | Planning files exist but no approved `agent-review-dialogue` result exists | Review generated planning documents | Manifest scope covers only generated OpenSpec planning files |
-| Planning review is approved but apply has not run | Pre-apply self-check | Final reviewed plan is still current; user approves apply; final B approval, A double-check, and Controller verification evidence are captured; session-specific A/B review artifacts are cleaned before apply starts |
+| Planning review is approved but apply has not run | Pre-apply self-check | Final reviewed plan is still current; user approves apply; final B approval, A double-check, and Controller verification evidence are captured; session-specific A/B review artifacts are cleaned before apply starts; development subagent context handoff is explicit if a subagent will be used |
 | Apply has run and implementation is incomplete | Apply and implement with TDD | Approved plan still matches intended implementation scope |
 | Implementation appears complete but verification is missing or failed | Verify and human-review | Required commands are known; failures return to TDD |
 | Verification and human review passed but change is not archived | Archive | Archive command form is known and required checks pass |
@@ -102,7 +128,7 @@ Recognize these middle-entry intents explicitly:
 
 - `review`, `planning review`, or `review the plan`: route to planning document review unless an approved, current review already exists.
 - `pre-apply`, `ready to apply`, or `apply check`: route to the pre-apply self-check unless planning review is missing or stale.
-- `apply`, `implement`, or `TDD`: route to apply/TDD only after user-approved pre-apply and completed A/B review artifact cleanup; otherwise stop at the missing gate.
+- `apply`, `implement`, or `TDD`: route to apply/TDD only after user-approved pre-apply, completed A/B review artifact cleanup, and explicit development subagent context handoff when a subagent will be used; otherwise stop at the missing gate.
 - `verify`, `test`, or `human review`: route to fresh verification; failed or missing verification returns to TDD.
 - `archive`: route to archive only after fresh verification and human review pass.
 - `commit`: route to clean commit handling only after archive succeeds and the diff is scoped to the completed change.
@@ -114,6 +140,8 @@ Recognize these middle-entry intents explicitly:
 
 - Existing OpenSpec planning documents must be preserved. Do not overwrite or regenerate them merely because the user invoked the skill again; inspect and resume from review or a later missing gate.
 - An `agent-review-dialogue` approval is current only when its target scope and timestamps correspond to the current planning files. If any reviewed planning file changed after approval, rerun review.
+- Development subagent context is current only when it is assembled after the latest approved planning review, A/B cleanup, and user apply approval. If planning documents, decisions, or prior-change artifacts change afterward, refresh the handoff before implementation continues.
+- A/B review evidence is not current if it depends on a development subagent's implicit memory. Any cross-change input used by A/B must appear in the review manifest or decisions.
 - OpenSpec apply work must not be repeated blindly. If implementation appears to have started, inspect the working tree, OpenSpec status, apply instructions, and task progress; continue implementation from the next missing or failing test.
 - Verification evidence is current only when it was produced after the latest relevant implementation, planning, archive, or spec change. Old terminal output without a durable artifact is not sufficient.
 - Archive success must be verified from command output and resulting file changes. If archive modifies specs, generated state, or metadata, rerun `openspec validate --all --strict --no-interactive` before commit handling.
@@ -207,7 +235,17 @@ When resuming here, verify that the approved review still matches the current pl
 
 ### 5. Apply And Implement With TDD
 
-Run `openspec-apply-change` only after user-approved pre-apply self-check, final result durable capture, and session-specific A/B coordination cleanup are all complete. If that skill is not available, run the CLI-supported apply fallback:
+Run `openspec-apply-change` only after user-approved pre-apply self-check, final result durable capture, session-specific A/B coordination cleanup, and any development subagent context handoff are all complete.
+
+If a development subagent will implement the change, prepare a per-change handoff before implementation starts:
+
+- Give it a single active change id and make clear that it owns only that change's implementation work.
+- Include current OpenSpec planning documents, apply instructions, explicit user decisions, relevant archived specs, relevant post-archive compression summaries, compatibility/migration notes, and selected commit/file references.
+- Exclude unrelated previous-change documents, broad conversation history, private A/B coordination artifacts that were cleaned, and any unstated assumptions from prior development sessions.
+- Tell it not to commit, push, archive, explore next changes, alter OpenSpec scope, or treat prior-change context as approval.
+- Tell it to report blockers to the Controller when implementation requires scope expansion, dependency changes, weaker tests, or behavior not captured in the reviewed plan.
+
+If `openspec-apply-change` is not available, run the CLI-supported apply fallback:
 
 ```bash
 openspec instructions apply --change "<change-id>" --json
@@ -231,6 +269,8 @@ Human confirmation required if implementation requires any of the following:
 - Accepting a weaker test strategy than the reviewed plan required.
 
 When resuming after apply work starts, do not re-apply blindly. Inspect the working tree, OpenSpec status, apply instructions, and task progress to determine which approved tasks remain incomplete, then continue TDD from the next failing or missing test.
+
+When resuming a development subagent, reuse it only for the same active change and only if its context handoff is still current. If the workflow has moved to a new change, start a new development context from explicit artifacts instead of continuing the old subagent.
 
 ### 6. Verify And Human-Review
 
@@ -291,6 +331,7 @@ The compressed context must capture:
 - Verification commands and final results, including any post-archive `openspec validate --all --strict --no-interactive` rerun.
 - Final commit state: commit hash if committed, or the explicit user decision if commit/push handling was deferred and the workflow is stopping.
 - User-approved decisions, compatibility/migration notes, unresolved assumptions, and follow-up work.
+- Development subagent state: whether a per-change development subagent was used, its scope, completed tasks, remaining blockers, and confirmation that it should not be reused for the next change.
 - Workflow skill reload status: pending before reload, then completed after reload with evidence.
 - The safe next action and whether workflow skill reload and `openspec-explore` or the exploration fallback are allowed.
 
@@ -329,6 +370,7 @@ Always pause for explicit user approval at these gates:
 | A/B review surfaces product, API, compatibility, migration, dependency, scope, or verification decisions | Continuing the review loop |
 | Final reviewed plan approval after pre-apply self-check | `openspec-apply-change` or CLI-supported apply fallback |
 | A/B review intermediate cleanup | Starting apply work |
+| Development subagent context handoff | Starting implementation with a subagent |
 | Scope expansion, dependency changes, infrastructure changes, or weaker tests | Implementation beyond reviewed plan |
 | Automated verification and human diff/behavior review | `openspec archive "<change-id>"` |
 | Failed required verification | Any archive attempt; fix, rescope, or pause instead |
@@ -349,6 +391,8 @@ Stop and ask the user instead of guessing when:
 - `agent-review-dialogue` reports `blocked-on-user` or fails artifact validation.
 - The pre-apply self-check finds unresolved planning issues.
 - A/B review artifacts must be cleaned before apply but the active session-specific directory cannot be identified safely.
+- A development subagent would rely on implicit prior-change memory instead of explicit archived specs, compressed summaries, or Controller-selected artifacts.
+- A/B review would depend on development subagent memory or artifacts not listed in the review manifest or decisions.
 - `openspec-verify-change`, `openspec validate`, or required tests fail and cannot be fixed within the approved scope.
 - Archive or diff includes unrelated files.
 - A clean user-confirmed commit is not complete; do not proceed to next-change discovery.
