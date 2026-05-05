@@ -20,6 +20,7 @@ superpowers:brainstorming
 -> openspec archive "<change-id>"
 -> user-confirmed clean commit
 -> context compression
+-> reload openspec-change-workflow skill
 -> openspec-explore
 -> repeat or stop
 ```
@@ -46,7 +47,7 @@ Do not assume the workflow always starts at step 1. When invoked midstream, firs
 - Implement after apply with `superpowers:test-driven-development`.
 - Do not archive until `openspec-verify-change` or its manual fallback has no blocking findings, `openspec validate`, relevant tests/builds, and human review all pass. Failed verification cannot be waived into an archive.
 - Do not commit or push unless the user explicitly confirms. Preserve unrelated user changes and stage only files that belong to the completed change.
-- After `openspec archive "<change-id>"` completes and before the next OpenSpec exploration, proactively perform context compression with a durable structured summary of the completed change.
+- After `openspec archive "<change-id>"` completes and before the next OpenSpec exploration, proactively perform context compression with a durable structured summary of the completed change, then reload this workflow skill from disk or the current runtime skill source.
 - After archive and the user-confirmed clean commit are complete, use `openspec-explore` to discover the next candidate change, then ask before starting the next loop. If the commit is deferred, pause or stop instead of exploring.
 
 ## OpenSpec Invocation Compatibility
@@ -75,7 +76,7 @@ Before choosing any numbered workflow step, classify the current state:
 4. Continue from that gate, not from the beginning.
 5. If the current state is ambiguous and choosing the wrong stage could overwrite planning documents, skip review, archive failing work, or mix commits, ask the user before acting.
 
-The ordered gates are: scope confirmation, planning document generation, planning document review, pre-apply self-check and approval, A/B review artifact cleanup, apply/TDD implementation, fresh verification and human review, archive, clean user-confirmed commit, post-archive context compression, then next-change exploration. When resuming, never treat a later user request as proof that earlier gates passed; route to the earliest missing gate in that ordered list.
+The ordered gates are: scope confirmation, planning document generation, planning document review, pre-apply self-check and approval, A/B review artifact cleanup, apply/TDD implementation, fresh verification and human review, archive, clean user-confirmed commit, post-archive context compression, workflow skill reload, then next-change exploration. When resuming, never treat a later user request as proof that earlier gates passed; route to the earliest missing gate in that ordered list.
 
 ### Stage Router
 
@@ -92,7 +93,8 @@ Use this table to choose the correct resume point:
 | Verification and human review passed but change is not archived | Archive | Archive command form is known and required checks pass |
 | Archive is complete but no clean user-confirmed commit exists | Prepare clean commit | Diff contains only this completed change and user confirms commit |
 | Clean commit is complete but no post-archive compression exists | Context compression | Archive result, commit state, changed files, verification, and remaining assumptions are captured |
-| Clean commit and post-archive compression are complete, and user wants the next item | Explore next change | Working tree state is suitable for discovery and compressed context is current |
+| Post-archive compression is complete but this workflow skill has not been reloaded | Reload workflow skill | Current `openspec-change-workflow` instructions are loaded after compression |
+| Clean commit, post-archive compression, and workflow skill reload are complete, and user wants the next item | Explore next change | Working tree state is suitable for discovery, compressed context is current, and workflow instructions are current |
 
 If multiple changes are present, identify the active change id before continuing. If that cannot be determined safely, ask the user.
 
@@ -104,8 +106,9 @@ Recognize these middle-entry intents explicitly:
 - `verify`, `test`, or `human review`: route to fresh verification; failed or missing verification returns to TDD.
 - `archive`: route to archive only after fresh verification and human review pass.
 - `commit`: route to clean commit handling only after archive succeeds and the diff is scoped to the completed change.
-- `compress context`, `context compression`, or `summarize before next`: route to post-archive context compression after archive and clean commit handling are complete, or stop at the missing earlier gate.
-- `explore`, `next change`, or `what next`: route to next-change exploration only after archive, a clean user-confirmed commit, and post-archive context compression are complete.
+- `compress context`, `context compression`, or `summarize before next`: route to post-archive context compression after archive and clean commit handling are complete, then reload this workflow skill before explore; otherwise stop at the missing earlier gate.
+- `reload workflow`, `reload skill`, or `refresh workflow`: route to workflow skill reload only after post-archive context compression is current, or stop at the missing earlier gate.
+- `explore`, `next change`, or `what next`: route to next-change exploration only after archive, a clean user-confirmed commit, post-archive context compression, and workflow skill reload are complete.
 
 ### Evidence Freshness Rules
 
@@ -115,9 +118,10 @@ Recognize these middle-entry intents explicitly:
 - Verification evidence is current only when it was produced after the latest relevant implementation, planning, archive, or spec change. Old terminal output without a durable artifact is not sufficient.
 - Archive success must be verified from command output and resulting file changes. If archive modifies specs, generated state, or metadata, rerun `openspec validate --all --strict --no-interactive` before commit handling.
 - Failed verification cannot be waived into an archive. The only valid paths are fix within scope, rescope with review and approval, or pause.
-- Clean commit handling and post-archive context compression must finish before next-change exploration. If the completed change remains uncommitted, partially staged, mixed with unrelated changes, awaiting user confirmation, or not yet summarized after archive, do not run `openspec-explore` or the exploration fallback.
+- Clean commit handling, post-archive context compression, and workflow skill reload must finish before next-change exploration. If the completed change remains uncommitted, partially staged, mixed with unrelated changes, awaiting user confirmation, not yet summarized after archive, or the workflow skill has not been reloaded after compression, do not run `openspec-explore` or the exploration fallback.
 - A/B review cleanup is current only after the final `agent-review-dialogue` result has been durably captured outside the coordination directory that will be deleted, including B approval, A double-check no-change, Controller verification passed, review round count, unresolved assumptions, active change id, and user decisions that affect implementation. Clean only the active session-specific review coordination directory; do not delete the parent `.agent-review-dialogue/` tree, sibling review runs, OpenSpec planning documents, decisions that were copied into the plan, implementation files, or unrelated review runs.
-- Post-archive context compression is current only when it is produced after the latest archive, validation rerun, and clean commit decision. If files, archive state, or commit state change afterward, refresh the compressed context before `openspec-explore` or the exploration fallback.
+- Post-archive context compression is current only when it is produced after the latest archive, validation rerun, and clean commit decision. If files, archive state, or commit state change afterward, refresh the compressed context before workflow skill reload, `openspec-explore`, or the exploration fallback.
+- Workflow skill reload is current only when it happens after the latest post-archive context compression. If context is compressed again, or if this skill file changes, reload the workflow skill again before `openspec-explore` or the exploration fallback.
 
 ## Workflow
 
@@ -276,7 +280,7 @@ Human confirmation required before every commit and every push, even when all ch
 
 When resuming here, check whether a commit already exists for the archived change. If it does, do not create a duplicate; report the existing commit and continue only if the user asks for more git handling.
 
-### 9. Compress Context Before Next Explore
+### 9. Compress Context And Reload Workflow Before Next Explore
 
 After `openspec archive "<change-id>"` and clean commit handling are complete, proactively compress context before running `openspec-explore` or the exploration fallback. Use `context-compression` principles: preserve the artifact trail and decisions needed to continue without rereading the whole completed change.
 
@@ -287,15 +291,20 @@ The compressed context must capture:
 - Verification commands and final results, including any post-archive `openspec validate --all --strict --no-interactive` rerun.
 - Final commit state: commit hash if committed, or the explicit user decision if commit/push handling was deferred and the workflow is stopping.
 - User-approved decisions, compatibility/migration notes, unresolved assumptions, and follow-up work.
-- The safe next action and whether `openspec-explore` or the exploration fallback is allowed.
+- Workflow skill reload status: pending before reload, then completed after reload with evidence.
+- The safe next action and whether workflow skill reload and `openspec-explore` or the exploration fallback are allowed.
 
 Store the summary in a durable location or message that will survive context compaction. Do not rely on raw terminal scrollback. If the compression cannot preserve the archive result, commit state, and next-action constraints, stop and ask before exploring.
 
-When resuming here, check whether context compression was produced after the latest archive and clean commit handling. If it is missing or stale, refresh it before `openspec-explore` or the exploration fallback.
+Immediately after context compression, reload `openspec-change-workflow` from disk or the current runtime skill source before any next-change discovery. The first action after compaction must be to re-read this skill so the next loop uses the full workflow instead of a compressed memory of it.
+
+Record that reload in the durable summary or current response with the skill name, source path or runtime source, and timestamp. If the workflow skill cannot be reloaded, stop and ask before exploring.
+
+When resuming here, check whether context compression was produced after the latest archive and clean commit handling, and whether `openspec-change-workflow` was reloaded after that compression. If either is missing or stale, refresh compression or reload the workflow skill before `openspec-explore` or the exploration fallback.
 
 ### 10. Explore Next Change
 
-After archive, clean commit handling, and post-archive context compression are complete, use `openspec-explore` when available. If it is unavailable, use the CLI-supported exploration fallback:
+After archive, clean commit handling, post-archive context compression, and workflow skill reload are complete, use `openspec-explore` when available. If it is unavailable, use the CLI-supported exploration fallback:
 
 ```bash
 openspec list --json
@@ -306,7 +315,7 @@ Summarize any next actionable change. Ask the user whether to start it before ge
 
 If the user defers or declines the clean commit, do not run `openspec-explore` or the exploration fallback. Pause or stop the current lifecycle with the uncommitted state clearly reported, after compressing the completed archive context if the archive has already finished.
 
-When resuming here, first ensure the working tree is not carrying uncommitted files from the completed change and the compressed context is current. If either condition fails, return to clean commit handling or context compression instead of discovering a new change.
+When resuming here, first ensure the working tree is not carrying uncommitted files from the completed change, the compressed context is current, and this workflow skill was reloaded after compression. If any condition fails, return to clean commit handling, context compression, or workflow skill reload instead of discovering a new change.
 
 ## Human Confirmation Gates
 
@@ -326,7 +335,7 @@ Always pause for explicit user approval at these gates:
 | Unexpected archive output | Accepting archive result |
 | Clean commit | `git commit` |
 | Push | `git push` |
-| Post-archive context compression | `openspec-explore` or exploration fallback |
+| Post-archive context compression and workflow skill reload | `openspec-explore` or exploration fallback |
 | Next-change approval | Next `openspec-ff-change` or CLI-supported fast-forward fallback |
 
 ## Stop Conditions
@@ -344,4 +353,5 @@ Stop and ask the user instead of guessing when:
 - Archive or diff includes unrelated files.
 - A clean user-confirmed commit is not complete; do not proceed to next-change discovery.
 - Post-archive context compression is missing or stale before `openspec-explore` or the exploration fallback.
+- Workflow skill reload is missing or stale after context compression and before `openspec-explore` or the exploration fallback.
 - Any step would require committing, pushing, destructive git operations, broad formatting, or reverting user changes.
