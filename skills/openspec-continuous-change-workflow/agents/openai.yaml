@@ -1,0 +1,4 @@
+interface:
+  display_name: "OpenSpec Continuous Change Workflow"
+  short_description: "探索后集中决策并自动推进 OpenSpec 变更"
+  default_prompt: "Use $openspec-continuous-change-workflow to batch decisions after exploration, then continue automatically through planning review, apply, verification, archive, clean commit, reload, and next-change exploration."

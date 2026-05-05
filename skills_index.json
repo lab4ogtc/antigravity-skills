@@ -180,6 +180,12 @@
     "description": "Create and edit Obsidian Flavored Markdown with wikilinks, embeds, callouts, properties, and other Obsidian-specific syntax. Use when working with .md files in Obsidian, or when the user mentions wikilinks, callouts, frontmatter, tags, embeds, or Obsidian notes."
   },
   {
+    "id": "openspec-continuous-change-workflow",
+    "path": "skills/openspec-continuous-change-workflow",
+    "name": "openspec-continuous-change-workflow",
+    "description": "Use when the user wants an automated, continuous OpenSpec change lifecycle that mirrors openspec-change-workflow while minimizing repeated human confirmation: explore-time brainstorming decision batching, durable project-level constraints, automatic execution after planning or tasks begin, planning review, apply/TDD, verification, archive, clean commit, context compression, reload, and next-change exploration."
+  },
+  {
     "id": "pdf",
     "path": "skills/pdf",
     "name": "pdf",
