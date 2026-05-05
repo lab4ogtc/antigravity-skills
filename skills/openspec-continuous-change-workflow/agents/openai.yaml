@@ -1,4 +1,4 @@
 interface:
   display_name: "OpenSpec Continuous Change Workflow"
-  short_description: "探索后集中决策并自动推进 OpenSpec 变更"
-  default_prompt: "Use $openspec-continuous-change-workflow to batch decisions after exploration, then continue automatically through planning review, apply, verification, archive, clean commit, reload, and next-change exploration."
+  short_description: "主会话探索决策，独立子代理执行每个变更到总结回传"
+  default_prompt: "Use $openspec-continuous-change-workflow to keep the main session as explore/brainstorm/controller only, then delegate one OpenSpec change before new change creation to a dedicated workflow subagent through clean commit, context compression, reload, and summary return."

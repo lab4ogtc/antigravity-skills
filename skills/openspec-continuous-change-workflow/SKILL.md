@@ -1,70 +1,98 @@
 ---
 name: openspec-continuous-change-workflow
-description: "Use when the user wants an automated, continuous OpenSpec change lifecycle that mirrors openspec-change-workflow while minimizing repeated human confirmation: explore-time brainstorming decision batching, durable project-level constraints, automatic execution after planning or tasks begin, planning review, apply/TDD, verification, archive, clean commit, context compression, reload, and next-change exploration."
+description: "Use when the user wants an automated, continuous OpenSpec change lifecycle where the main session is only explore/brainstorm/controller, and each OpenSpec change is delegated before new change creation to a dedicated workflow subagent that owns planning review, apply/TDD, verification, archive, clean commit, context compression, reload, and summary return."
 ---
 
 # OpenSpec Continuous Change Workflow
 
 ## Purpose
 
-Run the same lifecycle as `openspec-change-workflow`, but optimize for continuous execution. Keep human interruptions rare, concentrated in the brainstorming window immediately after exploration and before planning, and justified by clear value. Convert reusable human decisions into durable project-level constraints so later changes do not ask the same question again.
+Run OpenSpec changes continuously while keeping the main conversation clean. The main session owns only exploration, brainstorming, reusable decision capture, workflow-subagent launch/control, final summary intake, and the next exploration window. Each individual change runs in its own dedicated workflow subagent, launched before `new change`, and the main session does not execute the change lifecycle when an independent subagent/session runtime is available.
 
 The intended loop is:
 
 ```text
-classify current stage
--> discover project constraints and reusable decisions
--> explore next change
--> brainstorm and batch all decision-worthy questions
--> create or resume OpenSpec planning
--> review planning documents
--> apply with TDD, preferably via a per-change development subagent
--> verify with OpenSpec validation and project checks
--> archive when all required checks pass
--> automatically create a scoped clean commit
--> compress context and update constraints
--> reload workflow
--> explore next change
--> repeat while the next action is authorized and safe
+main: classify state and load project constraints
+-> main: explore next candidate
+-> main: brainstorm and batch decision-worthy questions
+-> main: record reusable answers as project constraints
+-> main: start one workflow subagent before new change
+-> subagent: create new change or resume the assigned OpenSpec change
+-> subagent: generate/review planning documents
+-> subagent: apply with TDD
+-> subagent: verify, archive, and clean commit
+-> subagent: compress context and reload workflow instructions
+-> subagent: return durable completion summary
+-> main: ingest summary, then explore the next candidate
 ```
 
-This skill is an automation variant, not a bypass for correctness. Do not skip current-stage classification, stale-evidence checks, verification, archive inspection, unrelated-change protection, or repository history safety checks.
+This skill is an automation variant, not a shortcut around correctness. Do not skip stage classification, stale-evidence checks, planning review, verification, archive inspection, unrelated-change protection, or repository history safety checks.
 
-## Automation Contract
+## Non-Negotiable Model
 
-- Continue automatically through any gate whose decision is already covered by current OpenSpec documents, repository conventions, or durable project-level constraints.
-- Ask the user only during the explore-time brainstorming window, before OpenSpec planning documents or tasks are created, when the answer has high decision value and cannot be safely inferred from explicit artifacts.
-- Once proposal, design, spec deltas, or tasks start being written, continue automatically through review, apply, verification, archive, clean commit, compression, reload, and the next exploration unless a stop condition makes automation unsafe.
-- Batch all decision-worthy human questions in the brainstorming window after exploration and before planning. Do not introduce a separate pre-apply confirmation gate.
-- Record reusable answers in the project-level constraints artifact before continuing, then consult that artifact in later cycles.
-- Record one-off answers in the active change's decision notes instead of polluting project-level constraints.
-- Prefer development subagents in apply steps when the change is implementation-heavy, but keep the Controller responsible for stage classification, verification, archive, git handling, compression, and next-change discovery.
-- Automatically make a scoped clean commit after archive and post-archive validation when the diff contains only the completed change. Never run destructive git operations, delete unrelated files, accept failed required verification, or archive unexpected diffs without explicit user authorization.
+- Use exactly one dedicated workflow subagent per active OpenSpec change.
+- Start that workflow subagent before `openspec new change`, `openspec-ff-change`, or the CLI planning-generation fallback.
+- Do not run planning generation, planning review, apply, verification, archive, or clean commit in the main session when an independent subagent/session runtime is available.
+- Do not reuse one workflow subagent across multiple changes. End, freeze, or discard it after its change is archived, clean committed, compressed, and summarized.
+- If a run is interrupted after launch, continue the recorded workflow subagent/session for that change only when identity evidence exists; otherwise return a recovery blocker instead of taking over the lifecycle in the main session or launching a replacement subagent.
+- Keep main-session context out of implementation. Pass only explicit artifacts selected by the Controller: exploration result, brainstorm decisions, project constraints, relevant archived specs, relevant post-archive summaries, and current repository state needed to start safely.
+- After OpenSpec planning documents exist, treat those documents and explicit decision notes as the implementation contract. Do not rely on broad conversation history, hidden assumptions, terminal scrollback, or subagent private memory.
+- Nested `agent-review-dialogue` planning review may run inside the workflow subagent. Its A/B agents remain isolated review roles; their approval does not replace workflow-subagent verification or Controller summary intake.
+- Automatically create a scoped clean commit after archive and post-archive validation when the diff contains only the completed change.
+- Never run destructive git operations, delete unrelated files, accept failed required verification, or archive unexpected diffs without explicit user authorization.
 
-## Automation Boundary
+## Main Session Responsibilities
 
-The planned human decision window closes as soon as the workflow creates or modifies the first OpenSpec proposal, design, spec delta, or task file for the current change.
+The main session is an explorer and controller, not the change executor.
 
-After that point, do not ask for routine approval to review, apply, verify, archive, commit, compress, reload, or explore the next candidate. Continue until the current change reaches a clean commit and the workflow reaches the next change's exploration-to-brainstorming window, unless a stop condition applies.
+It must:
 
-If a high-value question appears after planning starts, first try to resolve it from project constraints, OpenSpec artifacts, tests, or repository conventions. Stop only when the missing answer would make continued automation unsafe or invalid.
+- Classify whether there is an active in-progress change or whether the next action is exploration.
+- Load durable project-level constraints before asking questions.
+- Run `openspec-explore` or the supported exploration fallback when the next candidate is unknown.
+- Use `superpowers:brainstorming` after exploration and before any planning document is created.
+- Ask only high-value questions during the exploration-to-brainstorming window.
+- Record reusable answers in a project-level constraint artifact.
+- Record change-local answers in a handoff note that the workflow subagent must materialize into OpenSpec planning documents or decision notes.
+- Start one workflow subagent with a minimal, explicit handoff.
+- Ingest the workflow subagent's final durable summary after completion.
+- Resume exploration only after the subagent reports archive, clean commit, context compression, and workflow reload evidence.
+
+The main session must not carry detailed implementation context forward. Its durable memory between changes should be project constraints plus compressed summaries.
+
+## Workflow Subagent Responsibilities
+
+The workflow subagent owns the full lifecycle for one change:
+
+- Reclassify current state for the assigned change from repository and OpenSpec artifacts.
+- Create or resume the assigned OpenSpec change, starting with `new change` when the change does not yet exist.
+- Generate proposal, design, spec deltas, tasks, and decision notes using the available OpenSpec skill or supported CLI fallback.
+- Run `agent-review-dialogue` on generated planning documents when planning review evidence is missing or stale.
+- Create a planning lock after review approval and durable decision capture.
+- Apply and implement with TDD.
+- Verify with OpenSpec validation and required project checks.
+- Archive only after required verification passes.
+- Create a scoped clean commit after archive and post-archive validation.
+- Compress the change context and reload the workflow instructions before returning.
+- Return a durable completion summary to the main session.
+
+The workflow subagent must stop and return a blocker to the main session when the change requires scope expansion, policy decisions not covered by the brainstorm window, unclear OpenSpec command semantics, failed verification that cannot be fixed within scope, archive surprises, unrelated diff contamination, or unsafe git history operations.
 
 ## Project-Level Constraints
 
-Before planning or applying a change, discover a durable project-level constraint artifact. Prefer an existing canonical location in this order:
+Before brainstorming or launching a workflow subagent, discover a durable project-level constraint artifact. Prefer an existing canonical location in this order:
 
 1. Repository instruction files that already govern agents, such as `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, or `.codex/instructions.md`.
 2. Existing OpenSpec project files that document conventions, such as `openspec/project.md`, `.openspec/project.md`, `openspec/CONSTRAINTS.md`, or `.openspec/CONSTRAINTS.md`.
 3. Existing project decision logs, architecture records, or policy files that the repository clearly uses.
 
-If no project-level constraint artifact exists, ask once in the explore-time brainstorming window where durable workflow constraints should live. After the user chooses, record that location and reuse it for future cycles. Do not invent a hidden constraints file when the repository has no convention.
+If no project-level constraint artifact exists, ask once during the exploration-to-brainstorming window where durable workflow constraints should live. After the user chooses, record that location and reuse it for future cycles. Do not invent a hidden constraints file when the repository has no convention.
 
 When writing constraints:
 
 - Use concise, dated entries with the decision, scope, rationale, source, and reuse rule.
 - Separate project-wide constraints from change-local decisions.
-- Mark constraints as `active`, `superseded`, or `experimental` when the repository already uses such states; otherwise keep plain text and append newer decisions below older ones.
-- Do not overwrite user-authored policy. Append or make the smallest targeted edit.
+- Append or make the smallest targeted edit; do not overwrite user-authored policy.
 - Do not treat a one-time exception as a project rule.
 
 Recommended entry shape when no local format exists:
@@ -76,16 +104,16 @@ Recommended entry shape when no local format exists:
   Decision: ...
   Scope: project-wide | capability | change-local
   Reuse rule: apply automatically when ...
-  Source: user confirmation in explore-time brainstorming for <change-id>
+  Source: user confirmation in exploration-to-brainstorming for <change-id>
 ```
 
 ## Decision Value Assessment
 
 Evaluate every possible question before asking it.
 
-Ask during explore-time brainstorming only when all are true:
+Ask during exploration-to-brainstorming only when all are true:
 
-- The decision affects product behavior, compatibility, migration, public API, security, dependency policy, verification obligations, repository history, or destructive operations.
+- The decision affects product behavior, compatibility, migration, public API, security, dependency policy, verification obligations, repository history, destructive operations, or scope.
 - The answer is not already explicit in OpenSpec documents, project constraints, tests, code conventions, or prior durable decisions.
 - Choosing wrong would cause meaningful rework, unsafe behavior, invalid verification, mixed commits, or policy violation.
 
@@ -101,9 +129,9 @@ Classify queued questions:
 
 | Class | Meaning | Action |
 | --- | --- | --- |
-| `blocker` | Wrong answer may invalidate the change, damage history, or violate policy | Ask in explore-time brainstorming before planning, or stop only if discovered later and automation would be unsafe |
-| `reusable-policy` | Answer should guide future changes | Ask once in explore-time brainstorming, then record in project constraints |
-| `change-local` | Answer affects only this change | Ask in explore-time brainstorming and record in change decisions |
+| `blocker` | Wrong answer may invalidate the change, damage history, or violate policy | Ask before launching the workflow subagent, or return a blocker if discovered later |
+| `reusable-policy` | Answer should guide future changes | Ask once, then record in project constraints |
+| `change-local` | Answer affects only this change | Ask before launch and pass as subagent handoff input |
 | `low-value` | Answer is inferable, testable, or immaterial | Do not ask; proceed and document the assumption only if useful |
 
 ## Entry Protocol
@@ -114,25 +142,26 @@ Start every invocation by classifying the current lifecycle state:
 2. Inspect repository state with non-destructive commands: `git status`, OpenSpec directories, current change files, review artifacts, constraint artifacts, and durable verification results when present.
 3. Identify the active change id, requested stage, latest completed gate with evidence, stale or missing evidence, and next safe action.
 4. Load project-level constraints before deciding whether to ask anything.
-5. Resume from the earliest incomplete required gate. Do not restart planning or overwrite documents when valid later-stage artifacts exist.
+5. If the next safe action belongs to a change lifecycle, launch the dedicated workflow subagent before `new change`. When resuming an interrupted change, continue the same recorded workflow subagent/session only when identity evidence exists; if identity evidence is missing, return a recovery blocker to the main session instead of executing the lifecycle in the main session or launching a replacement subagent.
 
 If multiple active changes exist and the active change cannot be determined safely, ask once before acting.
 
 ## Stage Router
 
-| Observed state | Resume at | Automation behavior |
+| Observed state | Main-session action | Workflow-subagent action |
 | --- | --- | --- |
-| No change exists for the requested work | Explore then brainstorm | Infer from user request and constraints; batch only blocker/reusable/change-local questions before planning |
-| Next candidate is known but planning files are missing | Brainstorm decision window | Resolve reusable and change-local decisions now; after this point do not stop for routine confirmation |
-| Scope is sufficient but planning files are missing | Generate planning documents | Use OpenSpec skill or supported CLI fallback |
-| Planning files exist without current approval | Planning review | Run review and fix planning issues automatically within brainstorm-approved scope |
-| Review is current but apply has not started | Apply/TDD | Start apply automatically, preferably with a per-change development subagent |
-| Implementation is incomplete | Continue TDD | Resume from failing or missing tests; avoid re-applying blindly |
-| Implementation appears complete | Verify | Run fresh OpenSpec validation and project checks |
-| Verification passes and archive is pending | Archive | Archive automatically unless archive semantics or diff are ambiguous |
-| Archive completed | Post-archive validation and clean commit | Validate all affected specs; stage only scoped files and commit automatically |
-| Clean commit is complete | Compress and reload | Produce durable summary, update constraints, reload this workflow |
-| Compression/reload are current and user requested continuity | Explore next | Discover next candidate and continue only if starting it is authorized |
+| No next candidate is known | Explore | None yet |
+| Candidate is known but scope decisions are missing | Brainstorm decision window | None yet |
+| Brainstorm decisions are complete and no OpenSpec change exists | Launch per-change workflow subagent before `new change` | Create change and planning documents |
+| Planning files exist but no approved review exists | Continue the recorded workflow subagent/session only with identity evidence; otherwise return a recovery blocker | Run planning review |
+| Planning review is current but implementation has not started | Continue the recorded workflow subagent/session only with identity evidence; otherwise return a recovery blocker | Create planning lock, apply with TDD |
+| Implementation is incomplete | Continue the recorded workflow subagent/session only with identity evidence; otherwise return a recovery blocker | Continue from failing or missing tests |
+| Implementation appears complete | Continue the recorded workflow subagent/session only with identity evidence; otherwise return a recovery blocker | Run fresh verification |
+| Verification passes and archive is pending | Continue the recorded workflow subagent/session only with identity evidence; otherwise return a recovery blocker | Archive and post-archive validation |
+| Archive completed but no clean commit exists | Continue the recorded workflow subagent/session only with identity evidence; otherwise return a recovery blocker | Stage scoped files and commit |
+| Clean commit exists but no returned summary exists | Continue the recorded workflow subagent/session only with identity evidence; otherwise return a recovery blocker | Compress context, reload workflow, and return summary |
+| Workflow subagent returned durable summary | Ingest summary and update durable context | End this subagent; do not reuse it |
+| Summary is ingested and continuity is authorized | Explore next | None; previous subagent is closed |
 
 ## OpenSpec Invocation Compatibility
 
@@ -150,17 +179,45 @@ Do not call unsupported guessed top-level commands such as `openspec apply`, `op
 
 ## Workflow
 
-### 1. Explore And Brainstorm Before Planning
+### 1. Explore And Brainstorm In Main Session
 
-Use `openspec-explore` or the supported exploration fallback first when the next change is not already known. Then use `superpowers:brainstorming` before creating or changing OpenSpec planning documents unless the scope is already captured in current OpenSpec files or durable user decisions.
+Use `openspec-explore` or the supported exploration fallback first when the next change is not already known. Then use `superpowers:brainstorming` before launching the workflow subagent.
 
-Treat the exploration-to-brainstorming window as the only planned human confirmation point for the change. During this window, decide change goal, user-visible outcome, in-scope and out-of-scope boundaries, acceptance criteria, verification expectations, compatibility/migration policy, and any reusable constraints worth recording.
+During this window, decide the change goal, user-visible outcome, in-scope and out-of-scope boundaries, acceptance criteria, verification expectations, compatibility/migration policy, and reusable constraints worth recording.
 
-Treat scope as sufficient when these decisions are explicit or inferable from project constraints. Ask only for blocker, reusable-policy, or change-local questions whose answers cannot be inferred. Once planning documents or tasks start being written, do not add a later pre-apply confirmation gate.
+Do not create or edit OpenSpec planning documents in the main session during this step. The workflow subagent creates or resumes them after launch.
 
-### 2. Generate Or Resume Planning Documents
+### 2. Prepare The Per-Change Handoff
 
-Generate planning documents only when they are missing or the user explicitly requests regeneration. If documents exist, inspect them and route forward.
+Create a minimal handoff for the workflow subagent. Include only:
+
+- Active change id or naming constraints, if known.
+- Exploration result and chosen candidate.
+- Brainstorm decisions and acceptance criteria.
+- Project-level constraint artifact path and relevant entries.
+- Change-local assumptions and verification expectations.
+- Relevant archived specs or compressed summaries selected by the Controller.
+- Current repository state needed to avoid mixing unrelated changes.
+- Stop conditions and requirement to return blockers to the main session.
+
+Exclude broad transcript history, raw terminal scrollback, private reasoning, unrelated prior-change context, and stale assumptions. The subagent must turn this handoff into OpenSpec planning documents or decision notes before apply.
+
+### 3. Launch One Workflow Subagent
+
+Launch one dedicated workflow subagent for the change. Tell it:
+
+- It owns this single change from before `new change` through clean commit, context compression, workflow reload, and summary return.
+- It must not start or explore another change.
+- It must use OpenSpec planning documents and explicit decision notes as the implementation contract.
+- It must run planning review before apply when current review evidence is missing or stale.
+- It must report blockers to the main session instead of expanding scope or weakening verification.
+- It must return a durable final summary with evidence.
+
+If no independent subagent/session runtime is available, stop and ask before running the change lifecycle in the main session. Do not silently collapse the whole workflow back into the main session.
+
+### 4. Subagent Creates Or Resumes Planning
+
+The workflow subagent generates planning documents only when they are missing or the user explicitly requested regeneration. If documents exist, it inspects them and resumes from the earliest missing gate.
 
 Use `openspec-ff-change` when available. Otherwise use the supported CLI loop:
 
@@ -170,48 +227,41 @@ openspec status --change "<change-id>" --json
 openspec instructions <artifact-id> --change "<change-id>" --json
 ```
 
-After generation, record unresolved assumptions in the change-local decision notes. Do not queue new human questions unless a stop condition appears and automation would be unsafe.
+After planning documents exist, unresolved assumptions must live in change-local decision notes. Do not rely on the main conversation as the source of truth.
 
-### 3. Review Planning Documents
+### 5. Subagent Reviews Planning Documents
 
 Use `agent-review-dialogue` after concrete OpenSpec planning files exist. Scope Agent A edits to generated OpenSpec planning documents and its `change-log.md`; Agent B reviews and writes `review.md`.
 
 Review for ambiguous requirements, unverifiable tasks, missing failure/migration/rollback/security considerations, contradictions across artifacts, scope creep, and whether implementation can proceed with TDD.
 
-Unlike the manual workflow, do not stop for every review comment. Route review findings as follows:
+Proceed only when the review loop reaches its own approval standard: B `approved`, A double-check, and Controller verification. Agent B's `review.md` may report only `needs-revision` or `approved`. If the nested review loop exposes a blocker through Agent A's `change-log.md` `Status: blocked-on-user` or the Controller's user-input phase, resolve it from project constraints or return a blocker to the main session.
 
-- Apply document fixes directly when they do not change behavior or policy.
-- Resolve anything covered by the brainstorm decisions or project constraints.
-- If review uncovers a blocker that should have been handled during brainstorming, stop only when continuing would be unsafe; otherwise document the assumption and verify it later.
-- Drop `low-value` questions after recording the assumption if it helps verification.
-
-Proceed only when the review loop reaches its own approval standard: B approval, A double-check, and Controller verification. If review reports `blocked-on-user`, either resolve it from existing constraints or stop with a concise explanation of why it could not be safely deferred.
-
-### 4. Planning Lock And Constraint Update
+### 6. Subagent Creates Planning Lock
 
 Before apply, reread final planning documents, review results, project constraints, and brainstorm decisions.
 
 Do not ask for ceremonial apply approval. Instead, create a planning lock:
 
-- Confirm in the artifact trail that all human-facing decisions for this change were handled during exploration/brainstorming or are covered by durable constraints.
+- Confirm that human-facing decisions for this change were handled during exploration/brainstorming or are covered by durable constraints.
 - Write reusable answers to the project-level constraints artifact.
-- Write change-local answers to the active OpenSpec change decision notes or planning documents.
+- Write change-local answers to OpenSpec decision notes or planning documents.
 - Mark low-value or deferred non-blockers as assumptions with verification expectations.
 - Clean only the active session-specific A/B coordination directory after durable review evidence is captured.
 
 After the planning lock exists, continue directly to apply.
 
-### 5. Apply And Implement With TDD
+### 7. Subagent Applies And Implements With TDD
 
-Run apply only after current review evidence, durable decisions, and any required constraint updates exist.
+Run apply only after current review evidence, durable decisions, and required constraint updates exist.
 
-Prefer a per-change development subagent for implementation. The handoff must include:
+Use `openspec-apply-change` when available. Otherwise use:
 
-- Active change id and exact implementation ownership.
-- Current planning documents, apply instructions, task list, explicit user decisions, project constraints, relevant archived specs, and selected prior summaries.
-- Boundaries: no next-change exploration, no scope expansion, no dependency or infrastructure changes without reporting a blocker. Commit and archive remain Controller responsibilities, not subagent responsibilities.
+```bash
+openspec instructions apply --change "<change-id>" --json
+```
 
-If no development subagent is used, implement directly with `superpowers:test-driven-development`:
+Then implement with `superpowers:test-driven-development`:
 
 1. Add or expose a failing test for the approved behavior.
 2. Implement the smallest correct change.
@@ -220,9 +270,7 @@ If no development subagent is used, implement directly with `superpowers:test-dr
 
 For C/C++ changes, also check RAII, ownership, exception/error safety, resource lifetime, undefined behavior, integer and bounds safety, concurrency assumptions, and concrete unit coverage.
 
-Stop during apply only for blockers: scope expansion, external behavior not captured in documents, new/replaced dependency, build/test/CI policy change, weaker test strategy, or destructive file/history operations.
-
-### 6. Verify
+### 8. Subagent Verifies, Archives, Commits, And Compresses
 
 Run fresh verification after implementation changes:
 
@@ -230,74 +278,54 @@ Run fresh verification after implementation changes:
 openspec validate "<change-id>" --type change --strict --no-interactive
 ```
 
-Also run the build, test, lint, static analysis, or project checks required by OpenSpec documents and repository norms. Use `openspec-verify-change` when available; otherwise perform manual artifact-to-implementation review.
+Also run required build, test, lint, static analysis, or project-specific checks. If verification fails, return to TDD and rerun verification. Do not archive a failed required check.
 
-If verification fails, return to TDD and rerun verification. Do not archive a failed required check, even with user pressure. If the approved scope cannot satisfy verification, pause with a scoped blocker and propose rescope or rollback.
+Archive automatically only when verification is current and passing, archive command form is known, and the working tree diff is scoped to the active change. Rerun `openspec validate --all --strict --no-interactive` if archive changed specs, generated state, or metadata.
 
-Human diff/behavior review is optional in this automation workflow unless project constraints require it or verification exposes a decision-worthy risk.
+Create a clean commit automatically when all are true:
 
-### 7. Archive
-
-Archive automatically only when verification is current and passing, the archive command form is known, and the working tree diff is scoped to the active change.
-
-Inspect local help before assuming command details when needed:
-
-```bash
-openspec archive --help
-```
-
-After archive:
-
-- Inspect command output and resulting diff.
-- Run `openspec validate --all --strict --no-interactive` if archive changed specs, generated state, or metadata.
-- Stop if archive output changes unexpected files, exposes unresolved follow-up work, or mixes unrelated changes.
-
-### 8. Automatic Clean Commit
-
-Review `git status`, `git diff`, and `git diff --cached`. Stage only files belonging to the completed change.
-
-Run `git commit` automatically after archive and post-archive validation when all are true:
-
-- The archive result is verified.
+- Archive result is verified.
 - Required validation and project checks pass.
-- The staged diff contains only the completed OpenSpec change and implementation.
+- Staged diff contains only the completed OpenSpec change and implementation.
 - No unrelated user changes are staged.
 
-Use a Chinese commit message in `类型: 简短描述` format, for example `feat: 完成 <change-id> 变更`. Preserve unrelated user changes.
+Inspect `git status`, `git diff`, and `git diff --cached` before staging. Stage only files belonging to the completed change.
 
-If unrelated files are staged, unstaged, or untracked, do not include them. If unrelated staged files prevent a clean commit and cannot be separated non-destructively, stop and ask how to proceed.
+Use a Chinese commit message in `类型: 简短描述` format, for example `feat: 完成 <change-id> 变更`.
 
-### 9. Compress Context, Update Constraints, Reload
+Preserve unrelated user changes. If unrelated staged files cannot be separated non-destructively, return a blocker to the main session.
 
-After archive and automatic clean commit are complete, produce durable context compression before next-change exploration. Capture:
+After commit, compress context and reload this workflow skill before returning to the main session.
 
-- Change id, capability/spec area, archive result, and files changed.
+### 9. Subagent Returns Durable Summary
+
+The workflow subagent's final summary must include:
+
+- Change id, capability/spec area, and archive result.
+- Planning document paths and review evidence.
 - Verification commands and final results.
-- Commit state: commit hash and commit message.
+- Files changed.
+- Commit hash and commit message.
 - Project constraints added or reused.
 - Change-local decisions, assumptions, residual risks, and follow-up work.
-- Development subagent scope and confirmation that it must not be reused for the next change.
-- Next safe action and whether exploration is allowed.
+- Confirmation that the subagent must not be reused for the next change.
+- Safe next action for the main session.
 
-Reload this skill from disk or current runtime source after compression. Record the reload source and timestamp in the durable summary or response. If the skill cannot be reloaded, stop before exploring next.
-
-### 10. Explore Next And Continue
-
-Explore next only when archive, automatic clean commit, compression, and workflow reload are current.
-
-Use `openspec-explore` when available. Otherwise use supported inspection commands and repository review. Summarize the next candidate, then run the next brainstorming decision window before creating any planning documents. Continue automatically only when the user's instruction authorizes continuous execution. If authorization is unclear, stop before creating the next change.
+The main session should ingest this summary, update its durable context if needed, then continue with `openspec-explore` for the next candidate.
 
 ## Stop Conditions
 
 Stop and ask instead of guessing when:
 
 - Current lifecycle stage or active change id cannot be identified safely.
+- No independent subagent/session runtime is available for a new change lifecycle.
+- An interrupted lifecycle lacks identity evidence for the original workflow subagent/session.
 - No project-level constraint location exists and a reusable decision must be recorded outside the brainstorming window.
 - A missing decision discovered after planning starts affects correctness, compatibility, migration, verification, repository history, destructive operations, or scope and cannot be safely handled as an assumption.
 - OpenSpec skill availability, CLI fallback, generated file layout, or archive semantics are unclear.
 - Planning review fails artifact validation or requires a decision outside the current scope.
 - A/B cleanup cannot identify the active session-specific coordination directory safely.
-- Development would rely on implicit prior memory instead of explicit artifacts.
+- The workflow subagent would rely on implicit prior memory instead of explicit artifacts.
 - Required verification fails and cannot be fixed within approved scope.
 - Archive or diff includes unrelated files.
 - A clean commit would require including unrelated changes or altering user changes.
@@ -305,4 +333,4 @@ Stop and ask instead of guessing when:
 
 ## Relationship To Manual Workflow
 
-Use `openspec-change-workflow` when the user wants explicit human approval at each major gate. Use this skill when the user wants the same lifecycle to run continuously after explore-time brainstorming, with reusable answers preserved as project constraints and automatic clean commits before the next change.
+Use `openspec-change-workflow` when the user wants explicit human approval at each major gate. Use this skill when the user wants the main session to handle only explore/brainstorm/controller duties while a dedicated per-change workflow subagent executes the full OpenSpec lifecycle from before `new change` through clean commit, context compression, reload, and summary return.

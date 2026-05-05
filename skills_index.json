@@ -183,7 +183,7 @@
     "id": "openspec-continuous-change-workflow",
     "path": "skills/openspec-continuous-change-workflow",
     "name": "openspec-continuous-change-workflow",
-    "description": "Use when the user wants an automated, continuous OpenSpec change lifecycle that mirrors openspec-change-workflow while minimizing repeated human confirmation: explore-time brainstorming decision batching, durable project-level constraints, automatic execution after planning or tasks begin, planning review, apply/TDD, verification, archive, clean commit, context compression, reload, and next-change exploration."
+    "description": "Use when the user wants an automated, continuous OpenSpec change lifecycle where the main session is only explore/brainstorm/controller, and each OpenSpec change is delegated before new change creation to a dedicated workflow subagent that owns planning review, apply/TDD, verification, archive, clean commit, context compression, reload, and summary return."
   },
   {
     "id": "pdf",
