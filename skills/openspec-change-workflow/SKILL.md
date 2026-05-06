@@ -49,6 +49,7 @@ Do not assume the workflow always starts at step 1. When invoked midstream, firs
 - The workflow subagent must not start OpenSpec apply work until the reviewed planning documents pass a final self-check and the Controller records explicit user approval to apply them.
 - Before the workflow subagent starts apply work, it cleans the session-specific A/B review coordination artifacts for the planning review only after final B approval, A double-check, Controller verification, and mandatory durable result capture are complete.
 - Use exactly one dedicated workflow subagent per active OpenSpec change when an independent subagent/session runtime is available.
+- Treat workflow subagent timeouts as soft signals. Use the extended timeout policy below before declaring a workflow subagent stalled, missing, or unrecoverable.
 - Start the workflow subagent before `openspec new change`, `openspec-ff-change`, or the CLI planning-generation fallback. The main session must not generate planning documents, run planning review, apply, verify, archive, or perform commit handling for a new change after the subagent runtime is available.
 - Do not reuse one workflow subagent across multiple changes. End, freeze, or discard it after the change is archived, commit handling is resolved, context is compressed, the workflow is reloaded, and the summary is returned.
 - If a run is interrupted after launch, continue the recorded workflow subagent/session for that change only when identity evidence exists. If identity evidence is missing, stop for a recovery decision instead of silently taking over the lifecycle in the main session or launching an unrecorded replacement.
@@ -77,6 +78,20 @@ Keep discovery inside the current agent runtime's visible skill or command list.
 | Explore next change | `openspec-explore` | Use `openspec list --json`, `openspec show`, repository inspection, and discussion to identify candidates; do not call `openspec explore` unless local help proves it exists |
 
 If the local OpenSpec version differs, inspect `openspec --help` and the relevant subcommand help before acting. If neither the matching skill nor a supported CLI fallback exists, stop and ask the user rather than calling a guessed command.
+
+## Workflow Subagent Timeout Policy
+
+Workflow subagents often perform slow OpenSpec planning, A/B review, TDD, builds, validation, archive, commit handling, and context compression. The Controller must therefore use longer waits than ordinary exploratory subagent calls and must not treat one or more `wait_agent` timeouts as completion failure.
+
+- Default to long waits for workflow subagents: use at least 10 minutes per `wait_agent` call when waiting for planning/review/apply/verify/archive/commit/compression results, unless the user explicitly asks for a shorter check-in cadence.
+- For implementation, builds, full test runs, archive, commit handling, or compression, prefer 20-30 minute waits when the tool allows it.
+- A `wait_agent` timeout means "no final message returned in that window"; it does not mean the subagent is dead, failed, or safe to replace.
+- After a timeout, inspect durable evidence before drawing conclusions: `git status`, the active change directory, bootstrap or change-local `workflow-state.md`, OpenSpec status, and recent planning/review/verification artifacts. Prefer artifacts written after the subagent launch or after the last Controller handoff over stale terminal output.
+- Treat current `workflow-state.md` identity as the recovery anchor. If it names the active change and recorded workflow subagent/session, and its current or immediately preceding gate matches durable artifact progress, continue or resume that same recorded subagent instead of launching a replacement.
+- Before declaring a workflow subagent stalled, send one concise status request to that same recorded subagent and wait again with the extended timeout. Do not send repeated status pings that could distract from long-running work.
+- Enter recovery only when all are true: no final summary has returned, no current workflow-state or artifact progress exists for the active change, the status request to the same recorded subagent has not produced a response after an extended wait, and replacing or taking over would not risk duplicate planning, duplicate implementation, mixed commits, skipped gates, or violation of the single-subagent-per-change boundary.
+- Recovery still requires the ordinary workflow's human confirmation gates. If replacement binding, main-session takeover, or manual continuation is considered, stop with the evidence checked and ask for an explicit recovery decision before doing any lifecycle work.
+- When reporting a possible stall to the user, explicitly say that tool-level timeout is a soft signal and name the evidence checked. Avoid saying the subagent has not created artifacts unless the filesystem check was run after the latest possible subagent notification.
 
 ## Workflow Subagent Context Boundaries
 

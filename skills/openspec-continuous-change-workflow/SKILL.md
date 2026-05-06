@@ -31,15 +31,49 @@ This skill is an automation variant, not a shortcut around correctness. Do not s
 ## Non-Negotiable Model
 
 - Use exactly one dedicated workflow subagent per active OpenSpec change.
+- Treat workflow subagent timeouts as soft signals. Use the extended timeout policy below before declaring a workflow subagent stalled, missing, or unrecoverable.
 - Start that workflow subagent before `openspec new change`, `openspec-ff-change`, or the CLI planning-generation fallback.
 - Do not run planning generation, planning review, apply, verification, archive, or clean commit in the main session when an independent subagent/session runtime is available.
 - Do not reuse one workflow subagent across multiple changes. End, freeze, or discard it after its change is archived, clean committed, compressed, and summarized.
-- If a run is interrupted after launch, continue the recorded workflow subagent/session for that change only when identity evidence exists; otherwise return a recovery blocker instead of taking over the lifecycle in the main session or launching a replacement subagent.
+- If a run is interrupted after launch, continue the recorded workflow subagent/session for that change only when durable workflow state and identity evidence both exist and agree; otherwise return a recovery blocker instead of taking over the lifecycle in the main session or launching a replacement subagent.
+- Persist workflow subagent identity and lifecycle state for the active change; timeout recovery, resume decisions, and next-change authorization must be based on that durable state plus repository evidence.
 - Keep main-session context out of implementation. Pass only explicit artifacts selected by the Controller: exploration result, brainstorm decisions, project constraints, relevant archived specs, relevant post-archive summaries, and current repository state needed to start safely.
 - After OpenSpec planning documents exist, treat those documents and explicit decision notes as the implementation contract. Do not rely on broad conversation history, hidden assumptions, terminal scrollback, or subagent private memory.
 - Nested `agent-review-dialogue` planning review may run inside the workflow subagent. Its A/B agents remain isolated review roles; their approval does not replace workflow-subagent verification or Controller summary intake.
 - Automatically create a scoped clean commit after archive and post-archive validation when the diff contains only the completed change.
 - Never run destructive git operations, delete unrelated files, accept failed required verification, or archive unexpected diffs without explicit user authorization.
+
+## Workflow Subagent Timeout Policy
+
+Workflow subagents often perform slow OpenSpec planning, nested A/B review, TDD, builds, validation, archive, clean commit, context compression, and workflow reload. The main session must therefore use longer waits than ordinary exploration subagent calls and must not treat one or more `wait_agent` timeouts as completion failure.
+
+- Default to long waits for workflow subagents: use at least 10 minutes per `wait_agent` call when waiting for planning/review/apply/verify/archive/commit/compression/reload/summary results.
+- For implementation, builds, full test runs, archive, clean commit, context compression, or workflow reload, prefer 20-30 minute waits when the tool allows it.
+- A `wait_agent` timeout means "no final message returned in that window"; it does not mean the subagent is dead, failed, or safe to replace.
+- After a timeout, inspect durable evidence before drawing conclusions: `git status`, the active change directory, recorded workflow state and subagent/session identity evidence, OpenSpec status, project constraint artifacts, and recent planning/review/verification/archive/commit/compression/reload artifacts. Prefer evidence written after the subagent launch or latest main-session handoff over stale terminal output.
+- If durable workflow state is missing, conflicts with identity evidence, or cannot be reconciled with repository artifacts for the active change, return a recovery blocker that freezes the active change. Identity evidence or artifact progress alone is not enough to continue, replace, take over in the main session, or explore the next change when the durable state anchor is unsafe.
+- If the durable workflow state names the active change and recorded subagent/session, and any OpenSpec change artifact, review artifact, verification artifact, repository diff, or state transition shows current or plausible progress for that change, continue or resume that same recorded subagent instead of launching a replacement.
+- Before declaring a recorded workflow subagent stalled, record one concise status request in durable workflow state, send it to that same recorded subagent/session, and wait again with the extended timeout. Do not send repeated status pings that could distract from long-running work. If no reliable same-subagent continuation target exists, return a recovery blocker instead of guessing a status target.
+- Return a recovery blocker when no final summary has returned and safe same-subagent continuation cannot be established from durable workflow state, identity evidence, artifact progress, and the single follow-up status request when a reliable status target existed. The blocker is a safety stop, not authorization for replacement, main-session takeover, or next-change exploration; those actions remain prohibited while they could risk duplicate planning, duplicate implementation, mixed commits, skipped gates, or acting while the current subagent may still be running.
+- When reporting a possible stall or returning a recovery blocker, explicitly say that tool-level timeout is a soft signal and name the evidence checked. Avoid saying the subagent has not created artifacts unless the filesystem check was run after the latest possible subagent notification.
+
+## Durable Workflow State And Identity Evidence
+
+Every active change needs a durable workflow state record that survives main-session interruption and tool timeouts. Prefer a repository-established state artifact when one exists; otherwise use a change-local `workflow-state.md` under the active OpenSpec change directory once the change id exists. If the workflow subagent is launched before the change directory exists, record the same fields in the explicit handoff or controller session record and require the workflow subagent to copy them into the change-local state file as soon as it creates or resumes the change.
+
+The state record is for lifecycle control, not for broad implementation context. It must stay small and include:
+
+- Active change id or pre-change candidate id.
+- Workflow subagent/session identity: runtime, title or handle, session id when available, launch timestamp, and latest continuation target.
+- Current lifecycle gate, latest completed gate, next expected evidence, and paths to planning/review/verification/archive/commit/compression/reload artifacts.
+- Main-session handoff timestamp and the timestamp/content summary of the single timeout status request, if one was sent.
+- Terminal state: final summary returned, blocker returned, or subagent closed after archive, clean commit, context compression, workflow reload, and summary intake.
+
+When a timeout status request is sent, record the request timestamp, request text summary, target continuation/session id, and follow-up wait result. The follow-up result should say whether the same subagent returned a final summary, returned a blocker, showed durable progress, remained silent through the extended wait, or could not be contacted through the recorded continuation target.
+
+The workflow subagent must update durable workflow state whenever it enters or completes a lifecycle gate, starts or finishes a long verification/build/test run, and before and after archive, clean commit, context compression, workflow reload, or final summary return. The main session must update the same state when it launches or resumes the subagent, sends the single timeout status request, completes the follow-up extended wait, ingests the final summary, or records a recovery blocker. Stale state is not a valid anchor for replacement, main-session takeover, or next-change exploration.
+
+The main session may use this state only to decide launch, resume, status-request, recovery-blocker, and next-exploration actions. It must not start a replacement subagent, take over lifecycle work, or explore the next change while the state is non-terminal or while a recorded subagent may still be running.
 
 ## Main Session Responsibilities
 
@@ -55,6 +89,7 @@ It must:
 - Record reusable answers in a project-level constraint artifact.
 - Record change-local answers in a handoff note that the workflow subagent must materialize into OpenSpec planning documents or decision notes.
 - Start one workflow subagent with a minimal, explicit handoff.
+- Record the workflow subagent identity and lifecycle state before making timeout, resume, recovery, or next-change decisions.
 - Ingest the workflow subagent's final durable summary after completion.
 - Resume exploration only after the subagent reports archive, clean commit, context compression, and workflow reload evidence.
 
@@ -142,7 +177,7 @@ Start every invocation by classifying the current lifecycle state:
 2. Inspect repository state with non-destructive commands: `git status`, OpenSpec directories, current change files, review artifacts, constraint artifacts, and durable verification results when present.
 3. Identify the active change id, requested stage, latest completed gate with evidence, stale or missing evidence, and next safe action.
 4. Load project-level constraints before deciding whether to ask anything.
-5. If the next safe action belongs to a change lifecycle, launch the dedicated workflow subagent before `new change`. When resuming an interrupted change, continue the same recorded workflow subagent/session only when identity evidence exists; if identity evidence is missing, return a recovery blocker to the main session instead of executing the lifecycle in the main session or launching a replacement subagent.
+5. If the next safe action belongs to a change lifecycle, launch the dedicated workflow subagent before `new change`. When resuming an interrupted change, continue the same recorded workflow subagent/session only when durable workflow state and identity evidence exist; if either is missing, return a recovery blocker to the main session instead of executing the lifecycle in the main session or launching a replacement subagent.
 
 If multiple active changes exist and the active change cannot be determined safely, ask once before acting.
 
@@ -153,13 +188,13 @@ If multiple active changes exist and the active change cannot be determined safe
 | No next candidate is known | Explore | None yet |
 | Candidate is known but scope decisions are missing | Brainstorm decision window | None yet |
 | Brainstorm decisions are complete and no OpenSpec change exists | Launch per-change workflow subagent before `new change` | Create change and planning documents |
-| Planning files exist but no approved review exists | Continue the recorded workflow subagent/session only with identity evidence; otherwise return a recovery blocker | Run planning review |
-| Planning review is current but implementation has not started | Continue the recorded workflow subagent/session only with identity evidence; otherwise return a recovery blocker | Create planning lock, apply with TDD |
-| Implementation is incomplete | Continue the recorded workflow subagent/session only with identity evidence; otherwise return a recovery blocker | Continue from failing or missing tests |
-| Implementation appears complete | Continue the recorded workflow subagent/session only with identity evidence; otherwise return a recovery blocker | Run fresh verification |
-| Verification passes and archive is pending | Continue the recorded workflow subagent/session only with identity evidence; otherwise return a recovery blocker | Archive and post-archive validation |
-| Archive completed but no clean commit exists | Continue the recorded workflow subagent/session only with identity evidence; otherwise return a recovery blocker | Stage scoped files and commit |
-| Clean commit exists but no returned summary exists | Continue the recorded workflow subagent/session only with identity evidence; otherwise return a recovery blocker | Compress context, reload workflow, and return summary |
+| Planning files exist but no approved review exists | Continue the recorded workflow subagent/session only with durable workflow state and identity evidence; otherwise return a recovery blocker | Run planning review |
+| Planning review is current but implementation has not started | Continue the recorded workflow subagent/session only with durable workflow state and identity evidence; otherwise return a recovery blocker | Create planning lock, apply with TDD |
+| Implementation is incomplete | Continue the recorded workflow subagent/session only with durable workflow state and identity evidence; otherwise return a recovery blocker | Continue from failing or missing tests |
+| Implementation appears complete | Continue the recorded workflow subagent/session only with durable workflow state and identity evidence; otherwise return a recovery blocker | Run fresh verification |
+| Verification passes and archive is pending | Continue the recorded workflow subagent/session only with durable workflow state and identity evidence; otherwise return a recovery blocker | Archive and post-archive validation |
+| Archive completed but no clean commit exists | Continue the recorded workflow subagent/session only with durable workflow state and identity evidence; otherwise return a recovery blocker | Stage scoped files and commit |
+| Clean commit exists but no returned summary exists | Continue the recorded workflow subagent/session only with durable workflow state and identity evidence; otherwise return a recovery blocker | Compress context, reload workflow, and return summary |
 | Workflow subagent returned durable summary | Ingest summary and update durable context | End this subagent; do not reuse it |
 | Summary is ingested and continuity is authorized | Explore next | None; previous subagent is closed |
 
@@ -197,6 +232,7 @@ Create a minimal handoff for the workflow subagent. Include only:
 - Project-level constraint artifact path and relevant entries.
 - Change-local assumptions and verification expectations.
 - Relevant archived specs or compressed summaries selected by the Controller.
+- Durable workflow state location or pre-change state fields that the subagent must materialize once the change directory exists.
 - Current repository state needed to avoid mixing unrelated changes.
 - Stop conditions and requirement to return blockers to the main session.
 
@@ -208,10 +244,13 @@ Launch one dedicated workflow subagent for the change. Tell it:
 
 - It owns this single change from before `new change` through clean commit, context compression, workflow reload, and summary return.
 - It must not start or explore another change.
+- It must preserve or create the durable workflow state record for its assigned change, including its own identity and current gate.
 - It must use OpenSpec planning documents and explicit decision notes as the implementation contract.
 - It must run planning review before apply when current review evidence is missing or stale.
 - It must report blockers to the main session instead of expanding scope or weakening verification.
 - It must return a durable final summary with evidence.
+
+Record launch identity evidence in durable workflow state or the explicit handoff before the first wait. If the runtime returns the final session id only after launch, update the state from the launch result or native session listing before treating any timeout as a stall.
 
 If no independent subagent/session runtime is available, stop and ask before running the change lifecycle in the main session. Do not silently collapse the whole workflow back into the main session.
 
@@ -309,6 +348,7 @@ The workflow subagent's final summary must include:
 - Project constraints added or reused.
 - Change-local decisions, assumptions, residual risks, and follow-up work.
 - Confirmation that the subagent must not be reused for the next change.
+- Confirmation that durable workflow state is terminal for this change.
 - Safe next action for the main session.
 
 The main session should ingest this summary, update its durable context if needed, then continue with `openspec-explore` for the next candidate.
@@ -319,7 +359,9 @@ Stop and ask instead of guessing when:
 
 - Current lifecycle stage or active change id cannot be identified safely.
 - No independent subagent/session runtime is available for a new change lifecycle.
-- An interrupted lifecycle lacks identity evidence for the original workflow subagent/session.
+- An interrupted lifecycle lacks durable workflow state or identity evidence for the original workflow subagent/session.
+- A workflow subagent appears timed out, but the extended timeout policy has not yet checked durable evidence, recorded and sent one status request to the same subagent, and completed the follow-up extended wait.
+- Durable workflow state is non-terminal or conflicting, so launching a replacement subagent, taking over lifecycle work, or exploring the next change could overlap with a still-running subagent.
 - No project-level constraint location exists and a reusable decision must be recorded outside the brainstorming window.
 - A missing decision discovered after planning starts affects correctness, compatibility, migration, verification, repository history, destructive operations, or scope and cannot be safely handled as an assumption.
 - OpenSpec skill availability, CLI fallback, generated file layout, or archive semantics are unclear.
