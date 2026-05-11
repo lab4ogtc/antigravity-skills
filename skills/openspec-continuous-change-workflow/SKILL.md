@@ -1,13 +1,13 @@
 ---
 name: openspec-continuous-change-workflow
-description: "Use when the user wants an automated, continuous OpenSpec change lifecycle where the main session is only explore/brainstorm/controller, and each OpenSpec change is delegated before new change creation to a dedicated workflow subagent that owns planning review, apply/TDD, verification, archive, clean commit, context compression, reload, and summary return."
+description: "Use when the user wants an automated, continuous OpenSpec change lifecycle where the main session is only explore/brainstorm/controller, each OpenSpec change is delegated before new change creation to a dedicated workflow subagent, and planning review is relayed through the Controller before the same subagent continues apply/TDD, verification, archive, clean commit, context compression, reload, and summary return."
 ---
 
 # OpenSpec Continuous Change Workflow
 
 ## Purpose
 
-Run OpenSpec changes continuously while keeping the main conversation clean. The main session owns only exploration, brainstorming, reusable decision capture, workflow-subagent launch/control, final summary intake, and the next exploration window. Each individual change runs in its own dedicated workflow subagent, launched before `new change`, and the main session does not execute the change lifecycle when an independent subagent/session runtime is available.
+Run OpenSpec changes continuously while keeping the main conversation clean. The main session owns only exploration, brainstorming, reusable decision capture, workflow-subagent launch/control, Controller-relayed planning review, final summary intake, and the next exploration window. Each individual change runs in its own dedicated workflow subagent, launched before `new change`, and the main session does not execute the change lifecycle when an independent subagent/session runtime is available.
 
 The intended loop is:
 
@@ -18,7 +18,11 @@ main: classify state and load project constraints
 -> main: record reusable answers as project constraints
 -> main: start one workflow subagent before new change
 -> subagent: create new change or resume the assigned OpenSpec change
--> subagent: generate/review planning documents
+-> subagent: generate planning documents and return planning-review request
+-> main: run agent-review-dialogue on generated planning documents
+-> main: capture durable A/B result or blocker packet outside review coordination dir
+-> main: filter A/B review context to durable packet, current plan, decisions, blockers, and freshness evidence
+-> main: deliver filtered packet to the same workflow subagent
 -> subagent: apply with TDD
 -> subagent: verify, archive, and clean commit
 -> subagent: compress context and reload workflow instructions
@@ -33,19 +37,20 @@ This skill is an automation variant, not a shortcut around correctness. Do not s
 - Use exactly one dedicated workflow subagent per active OpenSpec change.
 - Treat workflow subagent timeouts as soft signals. Use the extended timeout policy below before declaring a workflow subagent stalled, missing, or unrecoverable.
 - Start that workflow subagent before `openspec new change`, `openspec-ff-change`, or the CLI planning-generation fallback.
-- Do not run planning generation, planning review, apply, verification, archive, or clean commit in the main session when an independent subagent/session runtime is available.
+- Do not run planning generation, internal/manual planning review, apply, verification, archive, or clean commit in the main session when an independent subagent/session runtime is available. The only planning-review work the main session may perform is Controller-orchestrated `agent-review-dialogue` in response to a recorded workflow subagent request.
 - Do not reuse one workflow subagent across multiple changes. End, freeze, or discard it after its change is archived, clean committed, compressed, and summarized.
 - If a run is interrupted after launch, continue the recorded workflow subagent/session for that change only when durable workflow state and identity evidence both exist and agree; otherwise return a recovery blocker instead of taking over the lifecycle in the main session or launching a replacement subagent.
 - Persist workflow subagent identity and lifecycle state for the active change; timeout recovery, resume decisions, and next-change authorization must be based on that durable state plus repository evidence.
 - Keep main-session context out of implementation. Pass only explicit artifacts selected by the Controller: exploration result, brainstorm decisions, project constraints, relevant archived specs, relevant post-archive summaries, and current repository state needed to start safely.
 - After OpenSpec planning documents exist, treat those documents and explicit decision notes as the implementation contract. Do not rely on broad conversation history, hidden assumptions, terminal scrollback, or subagent private memory.
-- Nested `agent-review-dialogue` planning review may run inside the workflow subagent. Its A/B agents remain isolated review roles; their approval does not replace workflow-subagent verification or Controller summary intake.
+- The workflow subagent must not launch `agent-review-dialogue` itself. After planning documents exist, it returns a planning-review request to the main Controller; the Controller launches `agent-review-dialogue`, captures and filters the durable result or blocker packet, and only then resumes the same workflow subagent with that filtered packet.
+- After Controller-run A/B review, filter the main session's active context before any workflow-subagent resume, handoff, planning lock, apply, archive, clean commit, summary, or next-change exploration. Keep only the durable result or blocker packet, current planning files, recorded decisions, blockers, and freshness evidence; exclude raw A/B dialogue, round-by-round critique, temporary coordination notes, and review-agent private reasoning from later prompts, handoffs, summaries, and exploration inputs.
 - Automatically create a scoped clean commit after archive and post-archive validation when the diff contains only the completed change.
 - Never run destructive git operations, delete unrelated files, accept failed required verification, or archive unexpected diffs without explicit user authorization.
 
 ## Workflow Subagent Timeout Policy
 
-Workflow subagents often perform slow OpenSpec planning, nested A/B review, TDD, builds, validation, archive, clean commit, context compression, and workflow reload. The main session must therefore use longer waits than ordinary exploration subagent calls and must not treat one or more `wait_agent` timeouts as completion failure.
+Workflow subagents often perform slow OpenSpec planning, Controller-relayed review intake, TDD, builds, validation, archive, clean commit, context compression, and workflow reload. The main session must therefore use longer waits than ordinary exploration subagent calls and must not treat one or more `wait_agent` timeouts as completion failure.
 
 - Default to long waits for workflow subagents: use at least 10 minutes per `wait_agent` call when waiting for planning/review/apply/verify/archive/commit/compression/reload/summary results.
 - For implementation, builds, full test runs, archive, clean commit, context compression, or workflow reload, prefer 20-30 minute waits when the tool allows it.
@@ -66,6 +71,7 @@ The state record is for lifecycle control, not for broad implementation context.
 - Active change id or pre-change candidate id.
 - Workflow subagent/session identity: runtime, title or handle, session id when available, launch timestamp, and latest continuation target.
 - Current lifecycle gate, latest completed gate, next expected evidence, and paths to planning/review/verification/archive/commit/compression/reload artifacts.
+- Planning review request, Controller A/B result or blocker packet path, Controller review context filter evidence, and reviewed-file freshness evidence.
 - Main-session handoff timestamp and the timestamp/content summary of the single timeout status request, if one was sent.
 - Terminal state: final summary returned, blocker returned, or subagent closed after archive, clean commit, context compression, workflow reload, and summary intake.
 
@@ -74,6 +80,37 @@ When a timeout status request is sent, record the request timestamp, request tex
 The workflow subagent must update durable workflow state whenever it enters or completes a lifecycle gate, starts or finishes a long verification/build/test run, and before and after archive, clean commit, context compression, workflow reload, or final summary return. The main session must update the same state when it launches or resumes the subagent, sends the single timeout status request, completes the follow-up extended wait, ingests the final summary, or records a recovery blocker. Stale state is not a valid anchor for replacement, main-session takeover, or next-change exploration.
 
 The main session may use this state only to decide launch, resume, status-request, recovery-blocker, and next-exploration actions. It must not start a replacement subagent, take over lifecycle work, or explore the next change while the state is non-terminal or while a recorded subagent may still be running.
+
+## Controller-Relayed Planning Review
+
+Use this relay whenever a recorded workflow subagent reaches planning-document review. Do not run A/B review inside the workflow subagent, and do not let the workflow subagent replace A/B review with an internal self-review.
+
+The workflow subagent must stop after planning generation, update durable workflow state, and return a planning-review request to the main Controller. The request must include:
+
+- Active change id, workflow subagent/session identity, current gate, and planning files with paths plus freshness evidence such as timestamps, hashes, or latest diff summary.
+- Exact review target manifest, allowed edit scope, durable decision paths, and explicit exclusions.
+- Relevant brainstorm decisions, project constraints, change-local decisions, and selected cross-change artifacts, not broad transcript context.
+- Existing review artifacts to reuse or invalidate, if any.
+- Blockers or decisions needed before A/B review can continue.
+
+The Controller must validate the request against durable workflow state, then launch `agent-review-dialogue` in the main session with only the requested manifest, planning files, durable decisions, and explicit exclusions. If A/B raises product, API, compatibility, migration, dependency, scope, acceptance, verification, or repository-history decisions not already covered by durable constraints, resolve them from project constraints or return a blocker; do not let the workflow subagent guess.
+
+After `agent-review-dialogue` reaches approval, the Controller must capture a durable result packet outside any review coordination directory that may later be deleted. The packet must include active change id, requesting workflow subagent/session identity, planning-review request id or equivalent correlation evidence, B approval, A double-check result, Controller verification result, review round count, reviewed file freshness evidence, unresolved assumptions, decisions, and the active session-specific A/B coordination directory path for later cleanup.
+
+If `agent-review-dialogue` blocks, fails artifact validation, falls back to internal review, or finds stale reviewed files, the Controller must capture a durable blocker packet outside the review coordination directory before resuming the workflow subagent. The blocker packet must include active change id, requesting workflow subagent/session identity, planning-review request id or equivalent correlation evidence, blocker status, failing validation or freshness evidence, affected files, required decision or recovery action, and next gate.
+
+Immediately after producing an approved result packet or blocker packet, the Controller must filter its active review context. The post-review Controller context used for resuming the workflow subagent or future exploration is limited to:
+
+- The durable result or blocker packet path and concise contents.
+- The current reviewed planning files and freshness evidence.
+- Decisions, unresolved assumptions, blockers, and exact next gate.
+- The coordination directory path only for later cleanup.
+
+Exclude A/B conversation transcripts, intermediate comments that were resolved, raw review-agent outputs, private coordination files, and speculative reasoning from subsequent prompts, handoffs, summaries, and next-change exploration. If the runtime supports context compaction, filtering, or thread summarization, run it immediately around the result or blocker packet before resuming the workflow subagent. If not, explicitly mark the raw A/B review as excluded and never paste it into the workflow subagent resume prompt.
+
+Record the filter evidence in durable workflow state: result or blocker packet path, kept categories, excluded categories, filter timestamp, and next gate. This evidence is required before the Controller resumes the workflow subagent.
+
+The Controller then sends only the filtered result or blocker packet to the same workflow subagent and waits for it to verify freshness before creating the planning lock. If A/B blocks, fails validation, falls back to internal review, or reviews stale files, the workflow subagent records the blocker intake in durable workflow state and does not advance to planning lock or apply.
 
 ## Main Session Responsibilities
 
@@ -89,6 +126,7 @@ It must:
 - Record reusable answers in a project-level constraint artifact.
 - Record change-local answers in a handoff note that the workflow subagent must materialize into OpenSpec planning documents or decision notes.
 - Start one workflow subagent with a minimal, explicit handoff.
+- Run `agent-review-dialogue` only when the recorded workflow subagent returns a planning-review request, then filter the review context before resuming that same subagent.
 - Record the workflow subagent identity and lifecycle state before making timeout, resume, recovery, or next-change decisions.
 - Ingest the workflow subagent's final durable summary after completion.
 - Resume exploration only after the subagent reports archive, clean commit, context compression, and workflow reload evidence.
@@ -102,7 +140,8 @@ The workflow subagent owns the full lifecycle for one change:
 - Reclassify current state for the assigned change from repository and OpenSpec artifacts.
 - Create or resume the assigned OpenSpec change, starting with `new change` when the change does not yet exist.
 - Generate proposal, design, spec deltas, tasks, and decision notes using the available OpenSpec skill or supported CLI fallback.
-- Run `agent-review-dialogue` on generated planning documents when planning review evidence is missing or stale.
+- Return a planning-review request when generated planning documents need review or review evidence is stale; do not launch `agent-review-dialogue` directly.
+- Ingest only the Controller-filtered review result or blocker packet and verify freshness before planning lock.
 - Create a planning lock after review approval and durable decision capture.
 - Apply and implement with TDD.
 - Verify with OpenSpec validation and required project checks.
@@ -188,8 +227,8 @@ If multiple active changes exist and the active change cannot be determined safe
 | No next candidate is known | Explore | None yet |
 | Candidate is known but scope decisions are missing | Brainstorm decision window | None yet |
 | Brainstorm decisions are complete and no OpenSpec change exists | Launch per-change workflow subagent before `new change` | Create change and planning documents |
-| Planning files exist but no approved review exists | Continue the recorded workflow subagent/session only with durable workflow state and identity evidence; otherwise return a recovery blocker | Run planning review |
-| Planning review is current but implementation has not started | Continue the recorded workflow subagent/session only with durable workflow state and identity evidence; otherwise return a recovery blocker | Create planning lock, apply with TDD |
+| Planning files exist but no approved review exists | Continue the recorded workflow subagent until it emits a planning-review request, then Controller runs A/B review; otherwise return a recovery blocker | Ingest filtered review result or blocker packet |
+| Planning review is current but implementation has not started | Continue the recorded workflow subagent/session only with durable workflow state, identity evidence, durable Controller result capture, Controller context filter evidence, and same-subagent filtered-result intake; otherwise return a recovery blocker | Create planning lock, clean review artifacts, apply with TDD |
 | Implementation is incomplete | Continue the recorded workflow subagent/session only with durable workflow state and identity evidence; otherwise return a recovery blocker | Continue from failing or missing tests |
 | Implementation appears complete | Continue the recorded workflow subagent/session only with durable workflow state and identity evidence; otherwise return a recovery blocker | Run fresh verification |
 | Verification passes and archive is pending | Continue the recorded workflow subagent/session only with durable workflow state and identity evidence; otherwise return a recovery blocker | Archive and post-archive validation |
@@ -211,6 +250,14 @@ Before each OpenSpec lifecycle action, use the corresponding available skill or 
 | Explore next | `openspec-explore` | `openspec list --json`, `openspec show`, repository inspection, and concise candidate summary |
 
 Do not call unsupported guessed top-level commands such as `openspec apply`, `openspec verify`, `openspec explore`, or `openspec new change --ff` unless local help proves they exist.
+
+## Evidence Freshness Rules
+
+- An `agent-review-dialogue` approval is current only when it was launched by the Controller from the recorded workflow subagent's planning-review request, and its target scope plus freshness evidence correspond to the current planning files. If any reviewed planning file changed after approval, rerun review through the Controller relay.
+- A/B review evidence is not current if it depends on workflow subagent implicit memory, was produced by an internal-review fallback, was not returned to the same workflow subagent as a durable Controller result packet, or lacks evidence that the Controller filtered A/B context after review.
+- A/B review cleanup is current only after the final Controller-orchestrated `agent-review-dialogue` result has been durably captured outside the coordination directory that will be deleted, Controller context filtering is complete, the same workflow subagent has ingested the filtered result packet, and the planning lock confirms required decisions are covered by brainstorm answers, durable constraints, or change-local decision notes. Required durable evidence includes active change id, requesting workflow subagent/session identity, planning-review request id or equivalent correlation evidence, B approval, A double-check no-change, Controller verification passed, review round count, reviewed file freshness evidence, Controller context filter evidence, unresolved assumptions, and decisions that affect implementation.
+- Clean only the active session-specific A/B coordination directory. Do not delete the parent `.agent-review-dialogue/` tree, sibling review runs, OpenSpec planning documents, decision notes, implementation files, or project constraints.
+- If cleanup already happened, continue only when durable evidence proves the same active change, requesting workflow subagent/session identity, planning-review correlation, B approval, A double-check no-change, Controller verification, reviewed file freshness, Controller context filter evidence, same-subagent filtered-result intake, and planning lock coverage. Otherwise return a recovery blocker instead of recreating or guessing deleted review context.
 
 ## Workflow
 
@@ -246,7 +293,7 @@ Launch one dedicated workflow subagent for the change. Tell it:
 - It must not start or explore another change.
 - It must preserve or create the durable workflow state record for its assigned change, including its own identity and current gate.
 - It must use OpenSpec planning documents and explicit decision notes as the implementation contract.
-- It must run planning review before apply when current review evidence is missing or stale.
+- It must return a planning-review request when current review evidence is missing or stale, then ingest only the Controller-filtered result or blocker packet before apply.
 - It must report blockers to the main session instead of expanding scope or weakening verification.
 - It must return a durable final summary with evidence.
 
@@ -270,15 +317,19 @@ After planning documents exist, unresolved assumptions must live in change-local
 
 ### 5. Subagent Reviews Planning Documents
 
-Use `agent-review-dialogue` after concrete OpenSpec planning files exist. Scope Agent A edits to generated OpenSpec planning documents and its `change-log.md`; Agent B reviews and writes `review.md`.
+The workflow subagent must not call `agent-review-dialogue` directly. After concrete OpenSpec planning files exist, the workflow subagent updates durable workflow state and returns a planning-review request to the main Controller.
+
+The Controller validates that the request belongs to the active recorded workflow subagent, then runs `agent-review-dialogue` in the main session. Scope Agent A edits to generated OpenSpec planning documents and its `change-log.md`; Agent B reviews and writes `review.md`.
 
 Review for ambiguous requirements, unverifiable tasks, missing failure/migration/rollback/security considerations, contradictions across artifacts, scope creep, and whether implementation can proceed with TDD.
 
-Proceed only when the review loop reaches its own approval standard: B `approved`, A double-check, and Controller verification. Agent B's `review.md` may report only `needs-revision` or `approved`. If the nested review loop exposes a blocker through Agent A's `change-log.md` `Status: blocked-on-user` or the Controller's user-input phase, resolve it from project constraints or return a blocker to the main session.
+Proceed only when the Controller-run review loop reaches its own approval standard: B `approved`, A double-check, and Controller verification. Agent B's `review.md` may report only `needs-revision` or `approved`. If the review loop exposes a blocker through Agent A's `change-log.md` `Status: blocked-on-user` or the Controller's user-input phase, resolve it from project constraints or return a blocker to the main session.
+
+After approval, the Controller captures the durable result packet described in the relay protocol, filters its active A/B review context to that packet plus current planning files and recorded decisions, records filter evidence in durable workflow state, then sends the filtered packet to the same workflow subagent. The workflow subagent verifies that the reviewed file freshness evidence still matches the current planning files before creating the planning lock. If the review is blocked, stale, invalid, or fell back to internal review, the Controller captures and filters a blocker packet, records filter evidence in durable workflow state, returns only that blocker packet to the workflow subagent, and the workflow does not advance.
 
 ### 6. Subagent Creates Planning Lock
 
-Before apply, reread final planning documents, review results, project constraints, and brainstorm decisions.
+Before apply, reread final planning documents, the filtered Controller review result packet, project constraints, and brainstorm decisions.
 
 Do not ask for ceremonial apply approval. Instead, create a planning lock:
 
@@ -286,13 +337,14 @@ Do not ask for ceremonial apply approval. Instead, create a planning lock:
 - Write reusable answers to the project-level constraints artifact.
 - Write change-local answers to OpenSpec decision notes or planning documents.
 - Mark low-value or deferred non-blockers as assumptions with verification expectations.
-- Clean only the active session-specific A/B coordination directory after durable review evidence is captured.
+- Clean only the active session-specific A/B coordination directory after durable Controller result capture, Controller context filtering, same workflow subagent filtered-result intake, and planning lock coverage are complete.
+- Before deleting the coordination directory, durably capture active change id, requesting workflow subagent/session identity, planning-review request id or equivalent correlation evidence, B approval, A double-check no-change, Controller verification passed, review round count, reviewed file freshness evidence, Controller context filter evidence, unresolved assumptions, and decisions that affect implementation in a location that will not be deleted by cleanup.
 
 After the planning lock exists, continue directly to apply.
 
 ### 7. Subagent Applies And Implements With TDD
 
-Run apply only after current review evidence, durable decisions, and required constraint updates exist.
+Run apply only after current Controller-relayed review evidence, Controller context filter evidence, same workflow subagent filtered-result intake, durable decisions, planning lock, completed A/B cleanup, and required constraint updates exist.
 
 Use `openspec-apply-change` when available. Otherwise use:
 
@@ -342,6 +394,7 @@ The workflow subagent's final summary must include:
 
 - Change id, capability/spec area, and archive result.
 - Planning document paths and review evidence.
+- Controller review result or blocker packet path and context filter evidence.
 - Verification commands and final results.
 - Files changed.
 - Commit hash and commit message.
@@ -365,8 +418,10 @@ Stop and ask instead of guessing when:
 - No project-level constraint location exists and a reusable decision must be recorded outside the brainstorming window.
 - A missing decision discovered after planning starts affects correctness, compatibility, migration, verification, repository history, destructive operations, or scope and cannot be safely handled as an assumption.
 - OpenSpec skill availability, CLI fallback, generated file layout, or archive semantics are unclear.
-- Planning review fails artifact validation or requires a decision outside the current scope.
+- Planning review fails artifact validation, falls back to internal review, or requires a decision outside the current scope.
+- Controller A/B review completed but the active context has not been filtered to the durable result or blocker packet.
 - A/B cleanup cannot identify the active session-specific coordination directory safely.
+- A/B cleanup lacks durable evidence for the active change, requesting workflow subagent/session identity, planning-review correlation, Controller context filter evidence, same-subagent filtered-result intake, or planning lock coverage.
 - The workflow subagent would rely on implicit prior memory instead of explicit artifacts.
 - Required verification fails and cannot be fixed within approved scope.
 - Archive or diff includes unrelated files.

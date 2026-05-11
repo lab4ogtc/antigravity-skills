@@ -1,4 +1,4 @@
 interface:
   display_name: "OpenSpec Change Workflow"
-  short_description: "人工确认驱动的 OpenSpec 单变更子代理工作流"
-  default_prompt: "Use $openspec-change-workflow to run or resume one OpenSpec change with manual Controller confirmation gates and exactly one per-change workflow subagent."
+  short_description: "过滤 A/B 上下文的 OpenSpec 单变更工作流"
+  default_prompt: "Use $openspec-change-workflow to run or resume one OpenSpec change with one workflow subagent, filtered Controller-relayed A/B planning review, and manual confirmation gates."
